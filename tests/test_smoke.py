@@ -16,6 +16,12 @@ from kvt.widgets.env_table import EnvTable
 DEFAULT_ROW_COUNT = len(MOCK_DATA[DEFAULT_PROJECT][DEFAULT_ENV])
 
 
+async def wait_loaded(pilot) -> None:
+    """Wait for all background workers (load / navigate) to finish."""
+    await pilot.app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 class TestMount:
     async def test_table_populated_on_mount(self):
         """
@@ -24,6 +30,7 @@ class TestMount:
         Then the table contains the expected number of rows for the default context
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             assert pilot.app.query_one("#env-table", EnvTable).row_count == DEFAULT_ROW_COUNT
 
     async def test_search_hidden_on_mount(self):
@@ -39,10 +46,60 @@ class TestMount:
         """
         Given the app is launched
         When the UI mounts
-        Then the env table has focus
+        Then the env table has focus after loading completes
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             assert isinstance(pilot.app.focused, EnvTable)
+
+    async def test_loading_indicator_hidden_after_mount(self):
+        """
+        Given the app is launched
+        When the initial load worker completes
+        Then the loading indicator is hidden and the table is visible
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            assert app.loading is False
+            assert pilot.app.query_one("#env-table", EnvTable).display is True
+
+
+class TestLoading:
+    async def test_loading_true_during_navigation(self):
+        """
+        Given the app is loaded and clean
+        When _navigate_to is called directly
+        Then loading becomes True before the worker finishes
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            # Kick off navigation without waiting for it to finish
+            app._navigate_to("backend", "production")  # noqa: SLF001
+            await pilot.pause()  # one tick — worker is running but sleep not done
+
+            assert app.loading is True
+
+    async def test_loading_false_after_navigation(self):
+        """
+        Given the app is loaded and clean
+        When navigation completes
+        Then loading is False and the table shows the new context
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            app._navigate_to("backend", "production")  # noqa: SLF001
+            await wait_loaded(pilot)
+
+            assert app.loading is False
+            assert app.current_env == "production"
+            assert app.current_project == "backend"
+            expected = len(MOCK_DATA["backend"]["production"])
+            assert pilot.app.query_one("#env-table", EnvTable).row_count == expected
 
 
 class TestSearch:
@@ -53,6 +110,7 @@ class TestSearch:
         Then the search input becomes visible
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("/")
             assert pilot.app.query_one("#search", Input).display is True
 
@@ -63,6 +121,7 @@ class TestSearch:
         Then the table shows only matching rows
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("/")
             for ch in "API":
                 await pilot.press(ch)
@@ -75,6 +134,7 @@ class TestSearch:
         Then all rows are restored and the search bar is hidden
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("/")
             for ch in "API":
                 await pilot.press(ch)
@@ -89,6 +149,7 @@ class TestSearch:
         Then focus moves back to the table
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("/")
             await pilot.press("enter")
             assert isinstance(pilot.app.focused, EnvTable)
@@ -102,6 +163,7 @@ class TestNavigation:
         Then the cursor moves to the second row
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             table = pilot.app.query_one("#env-table", EnvTable)
             assert table.cursor_row == 0
             await pilot.press("j")
@@ -114,6 +176,7 @@ class TestNavigation:
         Then the cursor moves back to the first row
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             table = pilot.app.query_one("#env-table", EnvTable)
             await pilot.press("j")
             await pilot.press("k")
@@ -126,6 +189,7 @@ class TestNavigation:
         Then the cursor moves to the last row
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             table = pilot.app.query_one("#env-table", EnvTable)
             await pilot.press("G")
             assert table.cursor_row == table.row_count - 1
@@ -137,6 +201,7 @@ class TestNavigation:
         Then the cursor moves to the first row
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             table = pilot.app.query_one("#env-table", EnvTable)
             await pilot.press("G")
             assert table.cursor_row == table.row_count - 1
@@ -153,6 +218,7 @@ class TestEdit:
         Then the EditScreen modal is pushed
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("i")
             assert isinstance(pilot.app.screen, EditScreen)
 
@@ -163,6 +229,7 @@ class TestEdit:
         Then the table row count is unchanged and the provider reflects the new value
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = pilot.app
             table = app.query_one("#env-table", EnvTable)
 
@@ -182,6 +249,7 @@ class TestEdit:
         Then the modal closes and the provider value is unchanged
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             original = app._provider.get("APP_ENV")  # noqa: SLF001
 
@@ -198,6 +266,7 @@ class TestEdit:
         Then the dirty flag is True
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             assert app.dirty is False
 
@@ -219,6 +288,7 @@ class TestAdd:
         Then the AddScreen modal is pushed
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("o")
             assert isinstance(pilot.app.screen, AddScreen)
 
@@ -229,6 +299,7 @@ class TestAdd:
         Then the table has one more row
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = pilot.app
             table = app.query_one("#env-table", EnvTable)
 
@@ -250,6 +321,7 @@ class TestAdd:
         Then the table row count is unchanged
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = pilot.app
             table = app.query_one("#env-table", EnvTable)
 
@@ -268,6 +340,7 @@ class TestDelete:
         Then the ConfirmScreen modal is pushed
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("d")
             await pilot.press("d")
             assert isinstance(pilot.app.screen, ConfirmScreen)
@@ -279,6 +352,7 @@ class TestDelete:
         Then the table has one fewer row
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = pilot.app
             table = app.query_one("#env-table", EnvTable)
 
@@ -296,6 +370,7 @@ class TestDelete:
         Then the table row count is unchanged
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = pilot.app
             table = app.query_one("#env-table", EnvTable)
 
@@ -313,6 +388,7 @@ class TestDelete:
         Then the Yes button receives focus
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("d")
             await pilot.press("d")
             screen = pilot.app.screen
@@ -327,6 +403,7 @@ class TestDelete:
         Then the No button receives focus
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             await pilot.press("d")
             await pilot.press("d")
             screen = pilot.app.screen
@@ -342,6 +419,7 @@ class TestDelete:
         Then the delete is confirmed
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             table = pilot.app.query_one("#env-table", EnvTable)
             await pilot.press("d")
             await pilot.press("d")
@@ -359,6 +437,7 @@ class TestUndo:
         Then the original value is restored
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             original = app._provider.get("APP_ENV")  # noqa: SLF001
 
@@ -381,6 +460,7 @@ class TestUndo:
         Then the variable is restored and row count returns to the original count
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = pilot.app
             table = app.query_one("#env-table", EnvTable)
 
@@ -402,6 +482,7 @@ class TestUndo:
         Then dirty is False
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
 
             await pilot.press("i")
@@ -426,12 +507,13 @@ class TestContextSwitching:
         Then the table shows the vars for frontend/development
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             table = app.query_one("#env-table", EnvTable)
 
             assert app.current_env == DEFAULT_ENV  # staging
             await pilot.press("e")
-            await pilot.pause()
+            await wait_loaded(pilot)
 
             next_env = PROJECTS[DEFAULT_PROJECT][
                 (PROJECTS[DEFAULT_PROJECT].index(DEFAULT_ENV) + 1) % len(PROJECTS[DEFAULT_PROJECT])
@@ -447,6 +529,7 @@ class TestContextSwitching:
         Then current_env wraps back to the first env (production)
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             envs = PROJECTS[DEFAULT_PROJECT]
             last_env = envs[-1]
@@ -454,7 +537,7 @@ class TestContextSwitching:
             app.current_env = last_env
             await pilot.pause()
             await pilot.press("e")
-            await pilot.pause()
+            await wait_loaded(pilot)
 
             assert app.current_env == envs[0]
 
@@ -465,6 +548,7 @@ class TestContextSwitching:
         Then the table shows the vars for backend/production
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             table = app.query_one("#env-table", EnvTable)
 
@@ -492,9 +576,10 @@ class TestContextSwitching:
         Then the subtitle reflects the new environment
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             await pilot.press("e")
-            await pilot.pause()
+            await wait_loaded(pilot)
 
             assert app.current_env in app.sub_title
 
@@ -505,6 +590,7 @@ class TestContextSwitching:
         Then the table row count matches infra/production exactly
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             table = app.query_one("#env-table", EnvTable)
 
@@ -525,6 +611,7 @@ class TestDirtyGuard:
         Then the subtitle contains '1 unsaved change'
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
 
             await pilot.press("i")
@@ -543,6 +630,7 @@ class TestDirtyGuard:
         Then the subtitle contains '2 unsaved changes'
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
 
             # First add
@@ -574,11 +662,12 @@ class TestDirtyGuard:
         Then no ConfirmScreen is pushed and the env changes immediately
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
 
             assert not app.dirty
             await pilot.press("e")
-            await pilot.pause()
+            await wait_loaded(pilot)
 
             assert not isinstance(app.screen, ConfirmScreen)
             assert app.current_env != DEFAULT_ENV
@@ -590,6 +679,7 @@ class TestDirtyGuard:
         Then a ConfirmScreen is pushed with the change count in the message
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
 
             await pilot.press("i")
@@ -612,6 +702,7 @@ class TestDirtyGuard:
         Then the env changes and dirty is reset
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             original_env = app.current_env
 
@@ -625,7 +716,7 @@ class TestDirtyGuard:
             await pilot.press("e")
             await pilot.pause()
             await pilot.press("y")
-            await pilot.pause()
+            await wait_loaded(pilot)
 
             assert app.current_env != original_env
             assert not app.dirty
@@ -637,6 +728,7 @@ class TestDirtyGuard:
         Then the env is unchanged and dirty remains True
         """
         async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
             original_env = app.current_env
 

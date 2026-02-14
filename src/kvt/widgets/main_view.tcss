@@ -9,3 +9,8 @@
 #search:focus {
     border: tall $primary;
 }
+
+#loading {
+    height: 1fr;
+    color: $primary;
+}

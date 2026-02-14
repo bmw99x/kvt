@@ -2,7 +2,7 @@
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
-from textual.widgets import Input
+from textual.widgets import Input, LoadingIndicator
 
 from kvt.widgets.env_table import EnvTable
 
@@ -13,3 +13,4 @@ class MainView(Vertical):
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search keys and values…", id="search")
         yield EnvTable(id="env-table")
+        yield LoadingIndicator(id="loading")

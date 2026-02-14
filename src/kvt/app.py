@@ -1,9 +1,12 @@
 """Main application entry point."""
 
+import asyncio
+
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Input
+from textual import work
+from textual.widgets import Footer, Header, Input, LoadingIndicator
 
 from kvt.constants import APP_SUBTITLE, APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
@@ -24,12 +27,14 @@ class KvtApp(App):
     CSS_PATH = [
         "app.tcss",
         "widgets/env_tabs.tcss",
+        "widgets/main_view.tcss",
         "screens/context_picker.tcss",
     ]
     TITLE = APP_TITLE
     SUB_TITLE = APP_SUBTITLE
 
     dirty: reactive[bool] = reactive(False)
+    loading: reactive[bool] = reactive(False)
     current_env: reactive[str] = reactive(DEFAULT_ENV)
     current_project: reactive[str] = reactive(DEFAULT_PROJECT)
 
@@ -68,8 +73,17 @@ class KvtApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._all_vars = self._provider.list_vars()
         self.query_one("#search", Input).display = False
+        self.query_one("#loading", LoadingIndicator).display = False
+        self._load_initial()
+
+    @work
+    async def _load_initial(self) -> None:
+        """Simulate an initial data fetch on startup."""
+        self.loading = True
+        await asyncio.sleep(0.3)
+        self._all_vars = self._provider.list_vars()
+        self.loading = False
         self._refresh_table()
         self._get_table().focus()
         self._update_subtitle()
@@ -87,6 +101,12 @@ class KvtApp(App):
     def watch_dirty(self, dirty: bool) -> None:
         """Reflect unsaved state in the subtitle."""
         self._update_subtitle()
+
+    def watch_loading(self, loading: bool) -> None:
+        """Show or hide the loading overlay."""
+        indicator = self.query_one("#loading", LoadingIndicator)
+        indicator.display = loading
+        self.query_one("#env-table", EnvTable).display = not loading
 
     def watch_current_env(self, env: str) -> None:
         """Reload provider data whenever the active environment changes."""
@@ -171,11 +191,15 @@ class KvtApp(App):
         search.display = False
         self._get_table().focus()
 
-    def _navigate_to(self, project: str, env: str) -> None:
+    @work
+    async def _navigate_to(self, project: str, env: str) -> None:
         """Switch to project/env unconditionally, resetting dirty state."""
         self._project_env_memory[self.current_project] = self.current_env
+        self.loading = True
         self.current_project = project
+        await asyncio.sleep(0.4)
         self.current_env = env
+        self.loading = False
         self._get_table().focus()
 
     def _confirm_navigate(self, project: str, env: str) -> None:
