@@ -8,7 +8,8 @@ from textual.reactive import reactive
 from textual import work
 from textual.widgets import Footer, Header, Input, LoadingIndicator
 
-from kvt.constants import APP_SUBTITLE, APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
+from kvt.config import Config, load_config
+from kvt.constants import APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
 from kvt.screens.add import AddScreen
@@ -31,7 +32,6 @@ class KvtApp(App):
         "screens/context_picker.tcss",
     ]
     TITLE = APP_TITLE
-    SUB_TITLE = APP_SUBTITLE
 
     dirty: reactive[bool] = reactive(False)
     loading: reactive[bool] = reactive(False)
@@ -58,13 +58,31 @@ class KvtApp(App):
 
     def __init__(self, provider: SecretProvider | None = None) -> None:
         super().__init__()
-        self._provider: SecretProvider = provider or MockProvider()
+        self._config: Config = load_config()
+        if self._config:
+            self._projects: dict[str, list[str]] = {
+                svc: list(envs.keys()) for svc, envs in self._config.items()
+            }
+            default_project = next(iter(self._projects))
+            default_env = self._projects[default_project][0]
+            self._using_mock = False
+        else:
+            self._projects = PROJECTS
+            default_project = DEFAULT_PROJECT
+            default_env = DEFAULT_ENV
+            self._using_mock = True
+
+        self._default_project = default_project
+        self._default_env = default_env
+        self._provider: SecretProvider = provider or MockProvider(default_project, default_env)
         self._all_vars: list[EnvVar] = []
         self._filter: str = ""
         self._g_pressed: bool = False
         self._d_pressed: bool = False
         self._undo_stack: list[Action] = []
-        self._project_env_memory: dict[str, str] = {p: envs[0] for p, envs in PROJECTS.items()}
+        self._project_env_memory: dict[str, str] = {
+            p: envs[0] for p, envs in self._projects.items()
+        }
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -73,6 +91,9 @@ class KvtApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Apply config-derived defaults now that the DOM is ready.
+        self.current_project = self._default_project
+        self.current_env = self._default_env
         self.query_one("#search", Input).display = False
         self.query_one("#loading", LoadingIndicator).display = False
         self._load_initial()
@@ -89,7 +110,8 @@ class KvtApp(App):
         self._update_subtitle()
 
     def _update_subtitle(self) -> None:
-        base = f"[{self.current_project} · {self.current_env}]"
+        backend = "mock" if self._using_mock else "Azure Key Vault"
+        base = f"[{self.current_project} · {self.current_env}] · {backend}"
         n = len(self._undo_stack)
         if n == 1:
             self.sub_title = f"{base}  1 unsaved change"
@@ -110,7 +132,7 @@ class KvtApp(App):
 
     def watch_current_env(self, env: str) -> None:
         """Reload provider data whenever the active environment changes."""
-        self._provider = MockProvider(self.current_project, env)
+        self._provider = MockProvider(self.current_project, env)  # Phase 4: swap for AzureProvider
         self._all_vars = self._provider.list_vars()
         self._undo_stack.clear()
         self.dirty = False
@@ -222,7 +244,7 @@ class KvtApp(App):
 
     def action_cycle_env_next(self) -> None:
         """Advance to the next environment for the current project (wraps around)."""
-        envs = PROJECTS[self.current_project]
+        envs = self._projects[self.current_project]
         idx = envs.index(self.current_env) if self.current_env in envs else 0
         next_env = envs[(idx + 1) % len(envs)]
         self._confirm_navigate(self.current_project, next_env)
@@ -238,7 +260,7 @@ class KvtApp(App):
                 self._get_table().focus()
 
         self.push_screen(
-            ContextPickerScreen(self.current_project, self.current_env),
+            ContextPickerScreen(self.current_project, self.current_env, self._projects),
             on_pick,
         )
 

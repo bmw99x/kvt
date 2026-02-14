@@ -30,10 +30,16 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
     }
     """
 
-    def __init__(self, current_project: str, current_env: str) -> None:
+    def __init__(
+        self,
+        current_project: str,
+        current_env: str,
+        projects: dict[str, list[str]] | None = None,
+    ) -> None:
         super().__init__()
         self._current_project = current_project
         self._current_env = current_env
+        self._projects = projects if projects is not None else PROJECTS
         # Map list-view index → (project, env) for selectable rows.
         self._index_map: list[tuple[str, str]] = []
 
@@ -41,7 +47,7 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
         items: list[ListItem] = []
         initial_index = 0
 
-        for project, envs in PROJECTS.items():
+        for project, envs in self._projects.items():
             header = ListItem(
                 Static(f"  {project}", classes="picker-project"),
                 classes="picker-project-item",
@@ -73,7 +79,7 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
     def _selectable_to_list_index(self, project: str, env: str) -> int | None:
         """Return the ListView index (including non-selectable headers) for a given pair."""
         list_index = 0
-        for proj, envs in PROJECTS.items():
+        for proj, envs in self._projects.items():
             list_index += 1  # project header
             for e in envs:
                 if proj == project and e == env:
@@ -84,7 +90,7 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
     def _list_index_to_pair(self, list_index: int) -> tuple[str, str] | None:
         """Convert a ListView index back to (project, env), skipping headers."""
         idx = 0
-        for project, envs in PROJECTS.items():
+        for project, envs in self._projects.items():
             idx += 1  # project header
             for env in envs:
                 if idx == list_index:
