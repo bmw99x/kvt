@@ -1,12 +1,19 @@
 """Headless TUI smoke tests covering critical user journeys."""
 
-from textual.widgets import Input
+from typing import cast
+
+from textual.widgets import Button, Input
 
 from kvt.app import KvtApp
+from kvt.constants import DEFAULT_ENV, DEFAULT_PROJECT, MOCK_DATA, PROJECTS
+from kvt.providers import MockProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.edit import EditScreen
 from kvt.widgets.env_table import EnvTable
+
+# Row count for the default context (frontend / staging).
+DEFAULT_ROW_COUNT = len(MOCK_DATA[DEFAULT_PROJECT][DEFAULT_ENV])
 
 
 class TestMount:
@@ -14,10 +21,10 @@ class TestMount:
         """
         Given the app is launched with the default MockProvider
         When the UI mounts
-        Then the table contains 20 rows
+        Then the table contains the expected number of rows for the default context
         """
         async with KvtApp().run_test(headless=True) as pilot:
-            assert pilot.app.query_one("#env-table", EnvTable).row_count == 20
+            assert pilot.app.query_one("#env-table", EnvTable).row_count == DEFAULT_ROW_COUNT
 
     async def test_search_hidden_on_mount(self):
         """
@@ -57,7 +64,7 @@ class TestSearch:
         """
         async with KvtApp().run_test(headless=True) as pilot:
             await pilot.press("/")
-            for ch in "DATABASE":
+            for ch in "API":
                 await pilot.press(ch)
             assert pilot.app.query_one("#env-table", EnvTable).row_count == 2
 
@@ -69,10 +76,10 @@ class TestSearch:
         """
         async with KvtApp().run_test(headless=True) as pilot:
             await pilot.press("/")
-            for ch in "DATABASE":
+            for ch in "API":
                 await pilot.press(ch)
             await pilot.press("escape")
-            assert pilot.app.query_one("#env-table", EnvTable).row_count == 20
+            assert pilot.app.query_one("#env-table", EnvTable).row_count == DEFAULT_ROW_COUNT
             assert pilot.app.query_one("#search", Input).display is False
 
     async def test_enter_returns_focus_to_table(self):
@@ -166,7 +173,7 @@ class TestEdit:
             await pilot.press("enter")
             await pilot.pause()
 
-            assert table.row_count == 20
+            assert table.row_count == DEFAULT_ROW_COUNT
 
     async def test_edit_cancel_leaves_value_unchanged(self):
         """
@@ -175,14 +182,14 @@ class TestEdit:
         Then the modal closes and the provider value is unchanged
         """
         async with KvtApp().run_test(headless=True) as pilot:
-            app = pilot.app
-            original = app._provider.get_var("APP_ENV")  # noqa: SLF001
+            app = cast(KvtApp, pilot.app)
+            original = app._provider.get("APP_ENV")  # noqa: SLF001
 
             await pilot.press("i")
             await pilot.press("escape")
             await pilot.pause()
 
-            assert app._provider.get_var("APP_ENV") == original  # noqa: SLF001
+            assert app._provider.get("APP_ENV") == original  # noqa: SLF001
 
     async def test_edit_marks_dirty(self):
         """
@@ -191,7 +198,7 @@ class TestEdit:
         Then the dirty flag is True
         """
         async with KvtApp().run_test(headless=True) as pilot:
-            app = pilot.app
+            app = cast(KvtApp, pilot.app)
             assert app.dirty is False
 
             await pilot.press("i")
@@ -217,9 +224,9 @@ class TestAdd:
 
     async def test_add_new_variable_increases_row_count(self):
         """
-        Given the table has 20 rows
+        Given the table has DEFAULT_ROW_COUNT rows
         When the user adds a new variable via the AddScreen
-        Then the table has 21 rows
+        Then the table has one more row
         """
         async with KvtApp().run_test(headless=True) as pilot:
             app = pilot.app
@@ -234,7 +241,7 @@ class TestAdd:
             await pilot.press("enter")  # save
             await pilot.pause()
 
-            assert table.row_count == 21
+            assert table.row_count == DEFAULT_ROW_COUNT + 1
 
     async def test_add_cancel_leaves_row_count_unchanged(self):
         """
@@ -250,7 +257,7 @@ class TestAdd:
             await pilot.press("escape")
             await pilot.pause()
 
-            assert table.row_count == 20
+            assert table.row_count == DEFAULT_ROW_COUNT
 
 
 class TestDelete:
@@ -280,7 +287,7 @@ class TestDelete:
             await pilot.press("y")
             await pilot.pause()
 
-            assert table.row_count == 19
+            assert table.row_count == DEFAULT_ROW_COUNT - 1
 
     async def test_cancel_delete_leaves_row_count_unchanged(self):
         """
@@ -297,7 +304,51 @@ class TestDelete:
             await pilot.press("n")
             await pilot.pause()
 
-            assert table.row_count == 20
+            assert table.row_count == DEFAULT_ROW_COUNT
+
+    async def test_l_moves_focus_to_yes_button(self):
+        """
+        Given the ConfirmScreen is shown (No is focused by default)
+        When the user presses l
+        Then the Yes button receives focus
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await pilot.press("d")
+            await pilot.press("d")
+            screen = pilot.app.screen
+            assert isinstance(screen, ConfirmScreen)
+            await pilot.press("l")
+            assert screen.focused is screen.query_one("#confirm-yes", Button)
+
+    async def test_h_moves_focus_to_no_button(self):
+        """
+        Given the ConfirmScreen is shown with Yes focused
+        When the user presses h
+        Then the No button receives focus
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await pilot.press("d")
+            await pilot.press("d")
+            screen = pilot.app.screen
+            assert isinstance(screen, ConfirmScreen)
+            await pilot.press("l")  # focus Yes first
+            await pilot.press("h")  # back to No
+            assert screen.focused is screen.query_one("#confirm-no", Button)
+
+    async def test_enter_on_yes_confirms(self):
+        """
+        Given the ConfirmScreen is shown with Yes focused
+        When the user presses enter
+        Then the delete is confirmed
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            table = pilot.app.query_one("#env-table", EnvTable)
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.press("l")  # focus Yes
+            await pilot.press("enter")
+            await pilot.pause()
+            assert table.row_count == DEFAULT_ROW_COUNT - 1
 
 
 class TestUndo:
@@ -308,8 +359,8 @@ class TestUndo:
         Then the original value is restored
         """
         async with KvtApp().run_test(headless=True) as pilot:
-            app = pilot.app
-            original = app._provider.get_var("APP_ENV")  # noqa: SLF001
+            app = cast(KvtApp, pilot.app)
+            original = app._provider.get("APP_ENV")  # noqa: SLF001
 
             await pilot.press("i")
             await pilot.press("ctrl+a")
@@ -321,13 +372,13 @@ class TestUndo:
             await pilot.press("u")
             await pilot.pause()
 
-            assert app._provider.get_var("APP_ENV") == original  # noqa: SLF001
+            assert app._provider.get("APP_ENV") == original  # noqa: SLF001
 
     async def test_undo_reverses_delete(self):
         """
         Given a variable has been deleted
         When the user presses u
-        Then the variable is restored and row count returns to 20
+        Then the variable is restored and row count returns to the original count
         """
         async with KvtApp().run_test(headless=True) as pilot:
             app = pilot.app
@@ -337,12 +388,12 @@ class TestUndo:
             await pilot.press("d")
             await pilot.press("y")
             await pilot.pause()
-            assert table.row_count == 19
+            assert table.row_count == DEFAULT_ROW_COUNT - 1
 
             await pilot.press("u")
             await pilot.pause()
 
-            assert table.row_count == 20
+            assert table.row_count == DEFAULT_ROW_COUNT
 
     async def test_undo_clears_dirty_when_stack_empty(self):
         """
@@ -351,7 +402,7 @@ class TestUndo:
         Then dirty is False
         """
         async with KvtApp().run_test(headless=True) as pilot:
-            app = pilot.app
+            app = cast(KvtApp, pilot.app)
 
             await pilot.press("i")
             await pilot.press("ctrl+a")
@@ -365,3 +416,241 @@ class TestUndo:
             await pilot.pause()
 
             assert app.dirty is False
+
+
+class TestContextSwitching:
+    async def test_cycling_env_changes_row_count(self):
+        """
+        Given the app is on frontend/staging
+        When the user presses e to cycle to the next environment (development)
+        Then the table shows the vars for frontend/development
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            assert app.current_env == DEFAULT_ENV  # staging
+            await pilot.press("e")
+            await pilot.pause()
+
+            next_env = PROJECTS[DEFAULT_PROJECT][
+                (PROJECTS[DEFAULT_PROJECT].index(DEFAULT_ENV) + 1) % len(PROJECTS[DEFAULT_PROJECT])
+            ]
+            expected = len(MOCK_DATA[DEFAULT_PROJECT][next_env])
+            assert app.current_env == next_env
+            assert table.row_count == expected
+
+    async def test_cycling_env_wraps_around(self):
+        """
+        Given the app is on frontend/local (the last env)
+        When the user presses e
+        Then current_env wraps back to the first env (production)
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            envs = PROJECTS[DEFAULT_PROJECT]
+            last_env = envs[-1]
+
+            app.current_env = last_env
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert app.current_env == envs[0]
+
+    async def test_switching_project_loads_different_vars(self):
+        """
+        Given the app is on frontend/staging
+        When current_project is set to backend and current_env to production
+        Then the table shows the vars for backend/production
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            app.current_project = "backend"
+            app.current_env = "production"
+            await pilot.pause()
+
+            expected = len(MOCK_DATA["backend"]["production"])
+            assert table.row_count == expected
+
+    async def test_different_projects_have_different_keys(self):
+        """
+        Given MockProvider is constructed for frontend/staging and backend/production
+        When list_vars is called on each
+        Then the key sets are different
+        """
+        frontend_keys = {v.key for v in MockProvider("frontend", "staging").list_vars()}
+        backend_keys = {v.key for v in MockProvider("backend", "production").list_vars()}
+        assert frontend_keys != backend_keys
+
+    async def test_env_cycle_updates_subtitle(self):
+        """
+        Given the app is on frontend/staging
+        When the user presses e to cycle to the next env
+        Then the subtitle reflects the new environment
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert app.current_env in app.sub_title
+
+    async def test_project_switch_resets_to_correct_env_vars(self):
+        """
+        Given infra/production has fewer vars than backend/production
+        When current_project is switched to infra and current_env to production
+        Then the table row count matches infra/production exactly
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            app.current_project = "infra"
+            app.current_env = "production"
+            await pilot.pause()
+
+            expected = len(MOCK_DATA["infra"]["production"])
+            assert table.row_count == expected
+            assert expected != len(MOCK_DATA["backend"]["production"])
+
+
+class TestDirtyGuard:
+    async def test_subtitle_shows_unsaved_count_after_edit(self):
+        """
+        Given a clean app
+        When the user edits a value and saves
+        Then the subtitle contains '1 unsaved change'
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "changed":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert "1 unsaved change" in app.sub_title
+
+    async def test_subtitle_shows_plural_after_two_edits(self):
+        """
+        Given a clean app
+        When the user adds two new variables (two distinct undo entries)
+        Then the subtitle contains '2 unsaved changes'
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+
+            # First add
+            await pilot.press("o")
+            for ch in "FIRST_VAR":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "val1":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Second add
+            await pilot.press("o")
+            for ch in "SECOND_VAR":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "val2":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert "2 unsaved changes" in app.sub_title
+
+    async def test_clean_nav_requires_no_confirmation(self):
+        """
+        Given the app is clean (no unsaved changes)
+        When the user presses e to cycle the env
+        Then no ConfirmScreen is pushed and the env changes immediately
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+
+            assert not app.dirty
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert not isinstance(app.screen, ConfirmScreen)
+            assert app.current_env != DEFAULT_ENV
+
+    async def test_dirty_env_cycle_shows_confirmation(self):
+        """
+        Given the app has 1 unsaved change
+        When the user presses e to cycle the env
+        Then a ConfirmScreen is pushed with the change count in the message
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "changed":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ConfirmScreen)
+            assert "1 unsaved change" in cast(ConfirmScreen, app.screen)._message  # noqa: SLF001
+
+    async def test_confirm_nav_switches_env(self):
+        """
+        Given the app has unsaved changes and the ConfirmScreen is shown
+        When the user presses y
+        Then the env changes and dirty is reset
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            original_env = app.current_env
+
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "changed":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+
+            assert app.current_env != original_env
+            assert not app.dirty
+
+    async def test_cancel_nav_keeps_env_and_changes(self):
+        """
+        Given the app has unsaved changes and the ConfirmScreen is shown
+        When the user presses n
+        Then the env is unchanged and dirty remains True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            app = cast(KvtApp, pilot.app)
+            original_env = app.current_env
+
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "changed":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            await pilot.press("e")
+            await pilot.pause()
+            await pilot.press("n")
+            await pilot.pause()
+
+            assert app.current_env == original_env
+            assert app.dirty

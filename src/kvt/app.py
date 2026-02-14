@@ -5,25 +5,33 @@ from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widgets import Footer, Header, Input
 
-from kvt.constants import APP_SUBTITLE, APP_TITLE
+from kvt.constants import APP_SUBTITLE, APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
+from kvt.screens.context_picker import ContextPickerScreen
 from kvt.screens.edit import EditScreen
 from kvt.screens.help import HelpScreen
 from kvt.widgets.env_table import EnvTable
+from kvt.widgets.env_tabs import EnvTabs
 from kvt.widgets.main_view import MainView
 
 
 class KvtApp(App):
     """kvt — Azure Key Vault TUI."""
 
-    CSS_PATH = "app.tcss"
+    CSS_PATH = [
+        "app.tcss",
+        "widgets/env_tabs.tcss",
+        "screens/context_picker.tcss",
+    ]
     TITLE = APP_TITLE
     SUB_TITLE = APP_SUBTITLE
 
     dirty: reactive[bool] = reactive(False)
+    current_env: reactive[str] = reactive(DEFAULT_ENV)
+    current_project: reactive[str] = reactive(DEFAULT_PROJECT)
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -38,6 +46,9 @@ class KvtApp(App):
         Binding("o", "add_var", "Add"),
         Binding("d", "delete_var", "Delete"),
         Binding("u", "undo", "Undo"),
+        Binding("p", "pick_context", "Project"),
+        Binding("e", "cycle_env_next", "Env"),
+        Binding("tab", "cycle_env_next", show=False),
     ]
 
     def __init__(self, provider: SecretProvider | None = None) -> None:
@@ -48,9 +59,11 @@ class KvtApp(App):
         self._g_pressed: bool = False
         self._d_pressed: bool = False
         self._undo_stack: list[Action] = []
+        self._project_env_memory: dict[str, str] = {p: envs[0] for p, envs in PROJECTS.items()}
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield EnvTabs(id="env-tabs")
         yield MainView(id="main")
         yield Footer()
 
@@ -59,10 +72,38 @@ class KvtApp(App):
         self.query_one("#search", Input).display = False
         self._refresh_table()
         self._get_table().focus()
+        self._update_subtitle()
+
+    def _update_subtitle(self) -> None:
+        base = f"[{self.current_project} · {self.current_env}]"
+        n = len(self._undo_stack)
+        if n == 1:
+            self.sub_title = f"{base}  1 unsaved change"
+        elif n > 1:
+            self.sub_title = f"{base}  {n} unsaved changes"
+        else:
+            self.sub_title = base
 
     def watch_dirty(self, dirty: bool) -> None:
         """Reflect unsaved state in the subtitle."""
-        self.sub_title = f"{APP_SUBTITLE}  [modified]" if dirty else APP_SUBTITLE
+        self._update_subtitle()
+
+    def watch_current_env(self, env: str) -> None:
+        """Reload provider data whenever the active environment changes."""
+        self._provider = MockProvider(self.current_project, env)
+        self._all_vars = self._provider.list_vars()
+        self._undo_stack.clear()
+        self.dirty = False
+        self._refresh_table()
+        # Sync the read-only tab indicator.
+        tabs = self.query_one("#env-tabs", EnvTabs)
+        tabs.current_env = env
+        self._update_subtitle()
+
+    def watch_current_project(self, project: str) -> None:
+        """Push the new project into the tab bar and update subtitle."""
+        self.query_one("#env-tabs", EnvTabs).current_project = project
+        self._update_subtitle()
 
     def _get_table(self) -> EnvTable:
         return self.query_one("#env-table", EnvTable)
@@ -78,25 +119,30 @@ class KvtApp(App):
 
     def _apply_set(self, key: str, value: str) -> None:
         """Write a variable to the provider and sync local state."""
-        previous = self._provider.get_var(key)
-        self._provider.set_var(key, value)
+        previous = self._provider.get(key)
+        if previous is None:
+            self._provider.create(key, value)
+        else:
+            self._provider.update(key, value)
         self._all_vars = self._provider.list_vars()
         self._undo_stack.append(
             Action(kind=ActionKind.SET, key=key, value=value, previous_value=previous)
         )
         self.dirty = True
         self._refresh_table()
+        self._update_subtitle()
 
     def _apply_delete(self, key: str) -> None:
         """Delete a variable from the provider and sync local state."""
-        previous = self._provider.get_var(key)
+        previous = self._provider.get(key)
         if previous is None:
             return
-        self._provider.delete_var(key)
+        self._provider.delete(key)
         self._all_vars = self._provider.list_vars()
         self._undo_stack.append(Action(kind=ActionKind.DELETE, key=key, value=previous))
         self.dirty = True
         self._refresh_table()
+        self._update_subtitle()
 
     def _selected_key(self) -> str | None:
         """Return the key of the currently highlighted table row, or None."""
@@ -124,6 +170,53 @@ class KvtApp(App):
             self._refresh_table()
         search.display = False
         self._get_table().focus()
+
+    def _navigate_to(self, project: str, env: str) -> None:
+        """Switch to project/env unconditionally, resetting dirty state."""
+        self._project_env_memory[self.current_project] = self.current_env
+        self.current_project = project
+        self.current_env = env
+        self._get_table().focus()
+
+    def _confirm_navigate(self, project: str, env: str) -> None:
+        """Navigate to project/env, prompting if there are unsaved changes."""
+        if not self.dirty:
+            self._navigate_to(project, env)
+            return
+
+        n = len(self._undo_stack)
+        noun = "change" if n == 1 else "changes"
+        msg = f"You have {n} unsaved {noun}. Switch anyway?"
+
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._navigate_to(project, env)
+            else:
+                self._get_table().focus()
+
+        self.push_screen(ConfirmScreen(msg), on_confirm)
+
+    def action_cycle_env_next(self) -> None:
+        """Advance to the next environment for the current project (wraps around)."""
+        envs = PROJECTS[self.current_project]
+        idx = envs.index(self.current_env) if self.current_env in envs else 0
+        next_env = envs[(idx + 1) % len(envs)]
+        self._confirm_navigate(self.current_project, next_env)
+
+    def action_pick_context(self) -> None:
+        """Open the unified project+env picker modal."""
+
+        def on_pick(result: tuple[str, str] | None) -> None:
+            if result is not None:
+                project, env = result
+                self._confirm_navigate(project, env)
+            else:
+                self._get_table().focus()
+
+        self.push_screen(
+            ContextPickerScreen(self.current_project, self.current_env),
+            on_pick,
+        )
 
     def action_jump_top(self) -> None:
         """Implement vim-style gg: move to the first row on the second g press.
@@ -160,7 +253,7 @@ class KvtApp(App):
         key = self._selected_key()
         if key is None:
             return
-        current = self._provider.get_var(key) or ""
+        current = self._provider.get(key) or ""
 
         def on_save(new_value: str | None) -> None:
             if new_value is not None and new_value != current:
@@ -214,11 +307,11 @@ class KvtApp(App):
 
         if action.kind == ActionKind.SET:
             if action.previous_value is None:
-                self._provider.delete_var(action.key)
+                self._provider.delete(action.key)
             else:
-                self._provider.set_var(action.key, action.previous_value)
+                self._provider.update(action.key, action.previous_value)
         elif action.kind == ActionKind.DELETE:
-            self._provider.set_var(action.key, action.value)
+            self._provider.create(action.key, action.value)
 
         self._all_vars = self._provider.list_vars()
         self.dirty = bool(self._undo_stack)

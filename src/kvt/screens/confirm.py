@@ -17,6 +17,11 @@ class ConfirmScreen(ModalScreen[bool]):
         Binding("escape", "cancel", show=False),
         Binding("y", "confirm", show=False),
         Binding("n", "cancel", show=False),
+        Binding("q", "cancel", show=False),
+        Binding("h", "focus_no", show=False),
+        Binding("left", "focus_no", show=False),
+        Binding("l", "focus_yes", show=False),
+        Binding("right", "focus_yes", show=False),
     ]
 
     def __init__(self, message: str) -> None:
@@ -41,3 +46,9 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_focus_yes(self) -> None:
+        self.query_one("#confirm-yes", Button).focus()
+
+    def action_focus_no(self) -> None:
+        self.query_one("#confirm-no", Button).focus()
