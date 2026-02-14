@@ -1,0 +1,65 @@
+/* ── Overall layout ─────────────────────────────────────────────────── */
+
+Screen {
+    background: $surface;
+}
+
+#main {
+    height: 1fr;
+    padding: 0 1;
+}
+
+/* ── Search input ───────────────────────────────────────────────────── */
+
+#search {
+    dock: top;
+    height: 3;
+    margin: 1 0 0 0;
+    border: tall $primary-darken-2;
+    background: $surface-darken-1;
+}
+
+#search:focus {
+    border: tall $primary;
+}
+
+/* ── Env table ──────────────────────────────────────────────────────── */
+
+#env-table {
+    height: 1fr;
+    margin: 1 0;
+    scrollbar-gutter: stable;
+}
+
+#env-table > .datatable--header {
+    background: $primary-darken-3;
+    color: $text;
+    text-style: bold;
+}
+
+#env-table > .datatable--cursor {
+    background: $primary;
+    color: $text;
+}
+
+#env-table > .datatable--even-row {
+    background: $surface-darken-1;
+}
+
+/* ── Help modal ─────────────────────────────────────────────────────── */
+
+HelpScreen {
+    align: center middle;
+}
+
+#help-container {
+    width: 52;
+    height: auto;
+    padding: 2 3;
+    background: $surface-darken-2;
+    border: round $primary;
+}
+
+#help-text {
+    color: $text-muted;
+}
