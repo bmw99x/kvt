@@ -20,6 +20,11 @@ EnvTabs .tab {
     background: $surface-darken-1;
 }
 
+EnvTabs .tab:hover {
+    color: $text;
+    background: $surface;
+}
+
 EnvTabs .tab.active {
     color: $text;
     background: $primary-darken-2;

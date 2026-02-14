@@ -602,6 +602,24 @@ class TestContextSwitching:
             assert table.row_count == expected
             assert expected != len(MOCK_DATA["backend"]["production"])
 
+    async def test_clicking_env_tab_navigates(self):
+        """
+        Given the app is on frontend/staging
+        When the user clicks the 'production' environment tab
+        Then current_env changes to 'production' and the table updates
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            assert app.current_env == DEFAULT_ENV  # staging
+            await pilot.click("#tab-production")
+            await wait_loaded(pilot)
+
+            assert app.current_env == "production"
+            expected = len(MOCK_DATA[DEFAULT_PROJECT]["production"])
+            assert app.query_one("#env-table", EnvTable).row_count == expected
+
 
 class TestDirtyGuard:
     async def test_subtitle_shows_unsaved_count_after_edit(self):

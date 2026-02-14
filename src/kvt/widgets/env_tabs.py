@@ -1,6 +1,8 @@
 """Horizontal environment indicator bar with project label (read-only)."""
 
 from textual.app import ComposeResult
+from textual.events import Click
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
@@ -15,7 +17,17 @@ class EnvTabs(Widget):
 
     Both ``current_project`` and ``current_env`` are reactives kept in
     sync by the app.  When either changes the bar re-renders in place.
+
+    Clicking an env tab posts ``EnvTabs.TabClicked`` for the app to handle
+    via ``_confirm_navigate``, matching the same flow as pressing ``e``.
     """
+
+    class TabClicked(Message):
+        """Posted when the user clicks an environment tab."""
+
+        def __init__(self, env: str) -> None:
+            super().__init__()
+            self.env = env
 
     can_focus = False
     BINDINGS = []
@@ -23,9 +35,19 @@ class EnvTabs(Widget):
     current_project: reactive[str] = reactive(DEFAULT_PROJECT, init=False)
     current_env: reactive[str] = reactive(DEFAULT_ENV, init=False)
 
+    def __init__(
+        self,
+        projects: dict[str, list[str]] | None = None,
+        *,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(id=id, classes=classes)
+        self._projects = projects if projects is not None else PROJECTS
+
     def compose(self) -> ComposeResult:
         yield Static(f"{DEFAULT_PROJECT} ▸", id="env-tabs-project", classes="tab-project")
-        for env in PROJECTS[DEFAULT_PROJECT]:
+        for env in self._projects.get(DEFAULT_PROJECT, []):
             active = env == DEFAULT_ENV
             yield Static(
                 env,
@@ -41,7 +63,7 @@ class EnvTabs(Widget):
         await self.query(".tab").remove()
 
         # Mount new env tabs for the new project.
-        envs = PROJECTS.get(project, [])
+        envs = self._projects.get(project, [])
         await self.mount(
             *[
                 Static(
@@ -60,3 +82,15 @@ class EnvTabs(Widget):
                 tab.add_class("active")
             else:
                 tab.remove_class("active")
+
+    def on_click(self, event: Click) -> None:
+        """Navigate to the clicked environment tab."""
+        widget = event.widget
+        if (
+            widget is not None
+            and widget.has_class("tab")
+            and widget.id
+            and widget.id.startswith("tab-")
+        ):
+            env = widget.id[len("tab-") :]
+            self.post_message(EnvTabs.TabClicked(env))

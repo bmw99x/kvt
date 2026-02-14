@@ -86,7 +86,7 @@ class KvtApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield EnvTabs(id="env-tabs")
+        yield EnvTabs(self._projects, id="env-tabs")
         yield MainView(id="main")
         yield Footer()
 
@@ -146,6 +146,11 @@ class KvtApp(App):
         """Push the new project into the tab bar and update subtitle."""
         self.query_one("#env-tabs", EnvTabs).current_project = project
         self._update_subtitle()
+
+    def on_env_tabs_tab_clicked(self, event: EnvTabs.TabClicked) -> None:
+        """Handle a tab click — same confirm-navigate flow as pressing e."""
+        event.stop()
+        self._confirm_navigate(self.current_project, event.env)
 
     def _get_table(self) -> EnvTable:
         return self.query_one("#env-table", EnvTable)
