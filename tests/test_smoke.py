@@ -4,12 +4,15 @@ from typing import cast
 
 from textual.widgets import Button, Input
 
+from rich.text import Text
+
 from kvt.app import KvtApp
 from kvt.constants import DEFAULT_ENV, DEFAULT_PROJECT, MOCK_DATA, PROJECTS
 from kvt.providers import MockProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.edit import EditScreen
+from kvt.screens.multiline_view import MultilineViewScreen
 from kvt.widgets.env_table import EnvTable
 
 # Row count for the default context (frontend / staging).
@@ -764,3 +767,124 @@ class TestDirtyGuard:
 
             assert app.current_env == original_env
             assert app.dirty
+
+
+class TestMultilineSecrets:
+    async def test_multiline_row_shows_badge_not_raw_value(self):
+        """
+        Given the default context (frontend/staging) which has an ENV multiline secret
+        When the app loads
+        Then the ENV row shows a Rich Text badge (not the raw blob) in the value cell
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            cell = table.get_cell_at(
+                table.cursor_coordinate._replace(
+                    row=next(
+                        r
+                        for r in range(table.row_count)
+                        if str(table.get_cell_at(table.cursor_coordinate._replace(row=r, column=1)))
+                        == "ENV"
+                    ),
+                    column=2,
+                )
+            )
+            assert isinstance(cell, Text)
+
+    async def test_multiline_secret_selected_var_is_multiline_true(self):
+        """
+        Given the cursor is on the ENV (multiline) row
+        When selected_var_is_multiline is called
+        Then it returns True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            # Move cursor to the ENV row
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            assert table.selected_var_is_multiline() is True
+
+    async def test_pressing_i_on_multiline_opens_multiline_view(self):
+        """
+        Given the cursor is on the ENV (multiline) row
+        When the user presses i
+        Then the MultilineViewScreen is pushed
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+
+            assert isinstance(app.screen, MultilineViewScreen)
+
+    async def test_multiline_view_shows_inner_variables(self):
+        """
+        Given the MultilineViewScreen is open for the ENV secret
+        When the modal mounts
+        Then the inner EnvTable contains the exploded key/value pairs
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+
+            from kvt.domain.secrets import parse_dotenv_blob
+
+            blob = MOCK_DATA[DEFAULT_PROJECT][DEFAULT_ENV]["ENV"]
+            expected_count = len(parse_dotenv_blob(blob))
+
+            inner_table = app.screen.query_one("#ml-table", EnvTable)
+            assert inner_table.row_count == expected_count
+
+    async def test_escape_closes_multiline_view(self):
+        """
+        Given the MultilineViewScreen is open
+        When the user presses Escape
+        Then the modal is dismissed and the main table regains focus
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(app.screen, MultilineViewScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, MultilineViewScreen)

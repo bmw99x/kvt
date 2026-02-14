@@ -12,11 +12,13 @@ from kvt.config import Config, load_config
 from kvt.constants import APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
+from kvt.providers_azure import AzureProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.context_picker import ContextPickerScreen
 from kvt.screens.edit import EditScreen
 from kvt.screens.help import HelpScreen
+from kvt.screens.multiline_view import MultilineViewScreen
 from kvt.widgets.env_table import EnvTable
 from kvt.widgets.env_tabs import EnvTabs
 from kvt.widgets.main_view import MainView
@@ -30,6 +32,7 @@ class KvtApp(App):
         "widgets/env_tabs.tcss",
         "widgets/main_view.tcss",
         "screens/context_picker.tcss",
+        "screens/multiline_view.tcss",
     ]
     TITLE = APP_TITLE
 
@@ -132,7 +135,11 @@ class KvtApp(App):
 
     def watch_current_env(self, env: str) -> None:
         """Reload provider data whenever the active environment changes."""
-        self._provider = MockProvider(self.current_project, env)  # Phase 4: swap for AzureProvider
+        if self._using_mock:
+            self._provider = MockProvider(self.current_project, env)
+        else:
+            azure_env = self._config[self.current_project][env]
+            self._provider = AzureProvider(azure_env)
         self._all_vars = self._provider.list_vars()
         self._undo_stack.clear()
         self.dirty = False
@@ -300,10 +307,21 @@ class KvtApp(App):
         self.notify("Copied value to clipboard", timeout=2)
 
     def action_edit_var(self) -> None:
-        """Open the edit modal for the currently selected variable."""
+        """Open the appropriate modal for the currently selected variable.
+
+        Multiline secrets open the read-only drill-in view; single-line
+        secrets open the standard edit modal.
+        """
+        table = self._get_table()
         key = self._selected_key()
         if key is None:
             return
+
+        if table.selected_var_is_multiline():
+            blob = self._provider.get(key) or ""
+            self.push_screen(MultilineViewScreen(key, blob), lambda _: self._get_table().focus())
+            return
+
         current = self._provider.get(key) or ""
 
         def on_save(new_value: str | None) -> None:

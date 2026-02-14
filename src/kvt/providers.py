@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from kvt.constants import DEFAULT_ENV, DEFAULT_PROJECT, MOCK_DATA
+from kvt.domain.secrets import classify_secrets
 from kvt.models import EnvVar
 
 
@@ -39,7 +40,7 @@ class MockProvider:
         self._data: dict[str, str] = dict(MOCK_DATA.get(project, {}).get(env, {}))
 
     def list_vars(self) -> list[EnvVar]:
-        return [EnvVar(key=k, value=v) for k, v in self._data.items()]
+        return classify_secrets(self._data)
 
     def get_raw(self) -> str:
         return "\n".join(f"{k}={v}" for k, v in self._data.items())

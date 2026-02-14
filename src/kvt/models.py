@@ -8,6 +8,7 @@ from enum import Enum, auto
 class EnvVar:
     key: str
     value: str
+    is_multiline: bool = False
 
     def matches(self, query: str) -> bool:
         """Return True if key or value contains the query (case-insensitive)."""
