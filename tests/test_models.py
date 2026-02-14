@@ -1,6 +1,6 @@
-"""Unit tests for EnvVar model logic."""
+"""Unit tests for domain models."""
 
-from kvt.models import EnvVar
+from kvt.models import Action, ActionKind, EnvVar
 
 
 class TestEnvVarMatches:
@@ -103,3 +103,35 @@ class TestEnvVarConstruction:
         Then they are not equal
         """
         assert EnvVar(key="X", value="1") != EnvVar(key="X", value="2")
+
+
+class TestAction:
+    def test_set_action_stores_fields(self):
+        """
+        Given a SET action with key, value and a previous value
+        When constructing the Action
+        Then all fields are accessible
+        """
+        action = Action(kind=ActionKind.SET, key="FOO", value="new", previous_value="old")
+        assert action.kind == ActionKind.SET
+        assert action.key == "FOO"
+        assert action.value == "new"
+        assert action.previous_value == "old"
+
+    def test_delete_action_previous_value_defaults_to_none(self):
+        """
+        Given a DELETE action constructed without a previous_value
+        When accessing previous_value
+        Then it is None
+        """
+        action = Action(kind=ActionKind.DELETE, key="FOO", value="old")
+        assert action.previous_value is None
+
+    def test_set_action_with_no_previous_value_represents_add(self):
+        """
+        Given a SET action where previous_value is None
+        When inspecting the action
+        Then it represents an add (no prior value existed)
+        """
+        action = Action(kind=ActionKind.SET, key="NEW_KEY", value="val", previous_value=None)
+        assert action.previous_value is None

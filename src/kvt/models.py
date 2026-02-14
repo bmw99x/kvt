@@ -1,4 +1,7 @@
+"""Domain models."""
+
 from dataclasses import dataclass
+from enum import Enum, auto
 
 
 @dataclass
@@ -10,3 +13,25 @@ class EnvVar:
         """Return True if key or value contains the query (case-insensitive)."""
         q = query.lower()
         return q in self.key.lower() or q in self.value.lower()
+
+
+class ActionKind(Enum):
+    SET = auto()
+    DELETE = auto()
+
+
+@dataclass
+class Action:
+    """A reversible mutation applied to the variable set.
+
+    Used to build an undo stack. Each action records enough information to
+    reverse itself:
+    - SET (add or edit): reverse by restoring previous_value (or deleting if
+      there was no previous value, i.e. it was an add).
+    - DELETE: reverse by re-inserting the deleted key/value.
+    """
+
+    kind: ActionKind
+    key: str
+    value: str
+    previous_value: str | None = None

@@ -1,5 +1,3 @@
-/* ── Overall layout ─────────────────────────────────────────────────── */
-
 Screen {
     background: $surface;
 }
@@ -8,8 +6,6 @@ Screen {
     height: 1fr;
     padding: 0 1;
 }
-
-/* ── Search input ───────────────────────────────────────────────────── */
 
 #search {
     dock: top;
@@ -22,8 +18,6 @@ Screen {
 #search:focus {
     border: tall $primary;
 }
-
-/* ── Env table ──────────────────────────────────────────────────────── */
 
 #env-table {
     height: 1fr;
@@ -46,9 +40,10 @@ Screen {
     background: $surface-darken-1;
 }
 
-/* ── Help modal ─────────────────────────────────────────────────────── */
-
-HelpScreen {
+HelpScreen,
+EditScreen,
+AddScreen,
+ConfirmScreen {
     align: center middle;
 }
 
@@ -62,4 +57,66 @@ HelpScreen {
 
 #help-text {
     color: $text-muted;
+}
+
+#edit-container,
+#add-container {
+    width: 64;
+    height: auto;
+    padding: 2 3;
+    background: $surface-darken-2;
+    border: round $primary;
+}
+
+#edit-title,
+#add-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#edit-value,
+#add-key,
+#add-value {
+    margin-bottom: 1;
+    border: tall $primary-darken-2;
+    background: $surface-darken-1;
+}
+
+#edit-value:focus,
+#add-key:focus,
+#add-value:focus {
+    border: tall $primary;
+}
+
+#edit-hint,
+#add-hint {
+    color: $text-muted;
+}
+
+#add-error {
+    color: $error;
+    height: 1;
+    margin-bottom: 1;
+}
+
+#confirm-container {
+    width: 52;
+    height: auto;
+    padding: 2 3;
+    background: $surface-darken-2;
+    border: round $error;
+}
+
+#confirm-message {
+    text-style: bold;
+    margin-bottom: 2;
+}
+
+#confirm-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#confirm-buttons Button {
+    margin-left: 1;
 }

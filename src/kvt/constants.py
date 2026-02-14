@@ -13,6 +13,13 @@ HELP_TEXT = """\
  g g          Jump to top
  G            Jump to bottom
 
+ Edit
+ ──────────────────────────────
+ i / Enter    Edit selected value
+ o            Add new variable
+ d d          Delete selected variable
+ u            Undo last change
+
  Search
  ──────────────────────────────
  /            Open search

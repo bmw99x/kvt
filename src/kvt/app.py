@@ -2,11 +2,15 @@
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.reactive import reactive
 from textual.widgets import Footer, Header, Input
 
 from kvt.constants import APP_SUBTITLE, APP_TITLE
-from kvt.models import EnvVar
+from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
+from kvt.screens.add import AddScreen
+from kvt.screens.confirm import ConfirmScreen
+from kvt.screens.edit import EditScreen
 from kvt.screens.help import HelpScreen
 from kvt.widgets.env_table import EnvTable
 from kvt.widgets.main_view import MainView
@@ -19,6 +23,8 @@ class KvtApp(App):
     TITLE = APP_TITLE
     SUB_TITLE = APP_SUBTITLE
 
+    dirty: reactive[bool] = reactive(False)
+
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("?", "toggle_help", "Help"),
@@ -26,7 +32,12 @@ class KvtApp(App):
         Binding("escape", "clear_search", show=False),
         Binding("g", "jump_top", show=False),
         Binding("G", "jump_bottom", show=False),
-        Binding("y", "copy_value", "Copy value"),
+        Binding("y", "copy_value", "Copy"),
+        Binding("i", "edit_var", "Edit"),
+        Binding("enter", "edit_var", show=False),
+        Binding("o", "add_var", "Add"),
+        Binding("d", "delete_var", "Delete"),
+        Binding("u", "undo", "Undo"),
     ]
 
     def __init__(self, provider: SecretProvider | None = None) -> None:
@@ -35,6 +46,8 @@ class KvtApp(App):
         self._all_vars: list[EnvVar] = []
         self._filter: str = ""
         self._g_pressed: bool = False
+        self._d_pressed: bool = False
+        self._undo_stack: list[Action] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -47,6 +60,10 @@ class KvtApp(App):
         self._refresh_table()
         self._get_table().focus()
 
+    def watch_dirty(self, dirty: bool) -> None:
+        """Reflect unsaved state in the subtitle."""
+        self.sub_title = f"{APP_SUBTITLE}  [modified]" if dirty else APP_SUBTITLE
+
     def _get_table(self) -> EnvTable:
         return self.query_one("#env-table", EnvTable)
 
@@ -58,6 +75,36 @@ class KvtApp(App):
             else self._all_vars
         )
         self._get_table().load(vars)
+
+    def _apply_set(self, key: str, value: str) -> None:
+        """Write a variable to the provider and sync local state."""
+        previous = self._provider.get_var(key)
+        self._provider.set_var(key, value)
+        self._all_vars = self._provider.list_vars()
+        self._undo_stack.append(
+            Action(kind=ActionKind.SET, key=key, value=value, previous_value=previous)
+        )
+        self.dirty = True
+        self._refresh_table()
+
+    def _apply_delete(self, key: str) -> None:
+        """Delete a variable from the provider and sync local state."""
+        previous = self._provider.get_var(key)
+        if previous is None:
+            return
+        self._provider.delete_var(key)
+        self._all_vars = self._provider.list_vars()
+        self._undo_stack.append(Action(kind=ActionKind.DELETE, key=key, value=previous))
+        self.dirty = True
+        self._refresh_table()
+
+    def _selected_key(self) -> str | None:
+        """Return the key of the currently highlighted table row, or None."""
+        table = self._get_table()
+        if table.row_count == 0:
+            return None
+        cell = table.get_cell_at(table.cursor_coordinate._replace(column=1))
+        return str(cell)
 
     def action_toggle_help(self) -> None:
         self.push_screen(HelpScreen())
@@ -107,6 +154,76 @@ class KvtApp(App):
             return
         self.app.copy_to_clipboard(value)
         self.notify("Copied value to clipboard", timeout=2)
+
+    def action_edit_var(self) -> None:
+        """Open the edit modal for the currently selected variable."""
+        key = self._selected_key()
+        if key is None:
+            return
+        current = self._provider.get_var(key) or ""
+
+        def on_save(new_value: str | None) -> None:
+            if new_value is not None and new_value != current:
+                self._apply_set(key, new_value)
+                self.notify(f"Updated {key}", timeout=2)
+            self._get_table().focus()
+
+        self.push_screen(EditScreen(key=key, current_value=current), on_save)
+
+    def action_add_var(self) -> None:
+        """Open the add modal to insert a new variable."""
+        existing = {v.key for v in self._all_vars}
+
+        def on_save(var: EnvVar | None) -> None:
+            if var is not None:
+                self._apply_set(var.key, var.value)
+                self.notify(f"Added {var.key}", timeout=2)
+            self._get_table().focus()
+
+        self.push_screen(AddScreen(existing_keys=existing), on_save)
+
+    def action_delete_var(self) -> None:
+        """Implement vim-style dd: delete the selected variable on second d press."""
+        if self._d_pressed:
+            self._d_pressed = False
+            key = self._selected_key()
+            if key is None:
+                return
+
+            def on_confirm(confirmed: bool | None) -> None:
+                if confirmed:
+                    self._apply_delete(key)
+                    self.notify(f"Deleted {key}", timeout=2)
+                self._get_table().focus()
+
+            self.push_screen(ConfirmScreen(f"Delete  {key}?"), on_confirm)
+        else:
+            self._d_pressed = True
+            self.set_timer(0.5, self._reset_d)
+
+    def _reset_d(self) -> None:
+        self._d_pressed = False
+
+    def action_undo(self) -> None:
+        """Reverse the most recent mutation."""
+        if not self._undo_stack:
+            self.notify("Nothing to undo", timeout=2)
+            return
+
+        action = self._undo_stack.pop()
+
+        if action.kind == ActionKind.SET:
+            if action.previous_value is None:
+                self._provider.delete_var(action.key)
+            else:
+                self._provider.set_var(action.key, action.previous_value)
+        elif action.kind == ActionKind.DELETE:
+            self._provider.set_var(action.key, action.value)
+
+        self._all_vars = self._provider.list_vars()
+        self.dirty = bool(self._undo_stack)
+        self._refresh_table()
+        self.notify(f"Undid change to {action.key}", timeout=2)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search":

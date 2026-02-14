@@ -1,3 +1,5 @@
+"""Secret provider protocol and implementations."""
+
 from typing import Protocol
 
 from kvt.models import EnvVar
@@ -12,14 +14,24 @@ class SecretProvider(Protocol):
         """Return the full .env content as a string."""
         ...
 
+    def set_var(self, key: str, value: str) -> None:
+        """Insert or update a variable by key."""
+        ...
+
+    def delete_var(self, key: str) -> None:
+        """Remove a variable by key. No-op if the key does not exist."""
+        ...
+
+    def get_var(self, key: str) -> str | None:
+        """Return the current value for a key, or None if absent."""
+        ...
+
 
 class MockProvider:
     """In-memory provider for UI development and testing."""
 
-    _data: dict[str, str]
-
     def __init__(self) -> None:
-        self._data = {
+        self._data: dict[str, str] = {
             "APP_ENV": "staging",
             "DEBUG": "false",
             "LOG_LEVEL": "info",
@@ -47,3 +59,15 @@ class MockProvider:
 
     def get_raw(self) -> str:
         return "\n".join(f"{k}={v}" for k, v in self._data.items())
+
+    def set_var(self, key: str, value: str) -> None:
+        """Insert or update a variable. Preserves insertion order for new keys."""
+        self._data[key] = value
+
+    def delete_var(self, key: str) -> None:
+        """Remove a variable. No-op if absent."""
+        self._data.pop(key, None)
+
+    def get_var(self, key: str) -> str | None:
+        """Return the current value for a key, or None if absent."""
+        return self._data.get(key)
