@@ -27,6 +27,12 @@ AddScreen {
     border: tall $primary;
 }
 
+#add-multiline {
+    margin-bottom: 1;
+    background: $surface-darken-2;
+    border: none;
+}
+
 #add-error {
     color: $error;
     height: 1;

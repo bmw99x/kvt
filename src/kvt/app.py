@@ -309,8 +309,9 @@ class KvtApp(App):
     def action_edit_var(self) -> None:
         """Open the appropriate modal for the currently selected variable.
 
-        Multiline secrets open the read-only drill-in view; single-line
-        secrets open the standard edit modal.
+        Multiline secrets open the editable drill-in view where inner vars
+        can be added/edited/deleted; single-line secrets open the standard
+        edit modal.
         """
         table = self._get_table()
         key = self._selected_key()
@@ -319,7 +320,14 @@ class KvtApp(App):
 
         if table.selected_var_is_multiline():
             blob = self._provider.get(key) or ""
-            self.push_screen(MultilineViewScreen(key, blob), lambda _: self._get_table().focus())
+
+            def on_blob_save(new_blob: str | None) -> None:
+                if new_blob is not None:
+                    self._apply_set(key, new_blob)
+                    self.notify(f"Updated {key}", timeout=2)
+                self._get_table().focus()
+
+            self.push_screen(MultilineViewScreen(key, blob), on_blob_save)
             return
 
         current = self._provider.get(key) or ""

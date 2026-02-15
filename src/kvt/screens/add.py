@@ -4,9 +4,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label
+from textual.widgets import Checkbox, Input, Label
 
 from kvt.models import EnvVar
+
+_MULTILINE_PLACEHOLDER = "PLACEHOLDER=\\nEND="
 
 
 class AddScreen(ModalScreen[EnvVar | None]):
@@ -14,6 +16,10 @@ class AddScreen(ModalScreen[EnvVar | None]):
 
     Dismisses with a new EnvVar on save, or None on cancel.
     Inline validation prevents duplicate or blank keys.
+
+    When the "Multiline" checkbox is ticked the value field is hidden and
+    the secret is saved as a .env blob stub (``PLACEHOLDER=``).  The user
+    then opens the new row via the drill-in to add real inner variables.
     """
 
     BINDINGS = [
@@ -28,16 +34,31 @@ class AddScreen(ModalScreen[EnvVar | None]):
         with Vertical(id="add-container"):
             yield Label("Add variable", id="add-title")
             yield Input(placeholder="KEY", id="add-key")
+            yield Checkbox("Multiline (.env blob)", id="add-multiline")
             yield Input(placeholder="value", id="add-value")
             yield Label("", id="add-error")
-            yield Label("Tab to next field · Enter to save · Escape to cancel", id="add-hint")
+            yield Label("Tab · Enter to save · Escape to cancel", id="add-hint")
 
     def on_mount(self) -> None:
         self.query_one("#add-key", Input).focus()
 
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "add-multiline":
+            value_input = self.query_one("#add-value", Input)
+            value_input.display = not event.value
+            hint = self.query_one("#add-hint", Label)
+            if event.value:
+                hint.update("Tab · Enter to save · Escape to cancel  [open row with i to edit]")
+            else:
+                hint.update("Tab · Enter to save · Escape to cancel")
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "add-key":
-            self.query_one("#add-value", Input).focus()
+            is_multiline = self.query_one("#add-multiline", Checkbox).value
+            if is_multiline:
+                self._try_save()
+            else:
+                self.query_one("#add-value", Input).focus()
             return
 
         if event.input.id == "add-value":
@@ -45,7 +66,6 @@ class AddScreen(ModalScreen[EnvVar | None]):
 
     def _try_save(self) -> None:
         key = self.query_one("#add-key", Input).value.strip()
-        value = self.query_one("#add-value", Input).value
         error = self.query_one("#add-error", Label)
 
         if not key:
@@ -58,7 +78,12 @@ class AddScreen(ModalScreen[EnvVar | None]):
             self.query_one("#add-key", Input).focus()
             return
 
-        self.dismiss(EnvVar(key=key, value=value))
+        is_multiline = self.query_one("#add-multiline", Checkbox).value
+        if is_multiline:
+            self.dismiss(EnvVar(key=key, value=_MULTILINE_PLACEHOLDER, is_multiline=True))
+        else:
+            value = self.query_one("#add-value", Input).value
+            self.dismiss(EnvVar(key=key, value=value))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

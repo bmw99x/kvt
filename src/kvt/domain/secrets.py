@@ -47,6 +47,18 @@ def parse_dotenv_blob(blob: str) -> list[EnvVar]:
     return vars
 
 
+def encode_dotenv_blob(vars: list[EnvVar]) -> str:
+    """Encode a list of EnvVar instances back into an Azure-style .env blob.
+
+    Lines are joined with literal ``\\n`` (backslash-n), matching the format
+    Azure Key Vault uses when storing multiline secrets.  Each entry is
+    serialised as ``KEY=value`` with no quoting.
+
+    An empty list produces an empty string.
+    """
+    return "\\n".join(f"{v.key}={v.value}" for v in vars)
+
+
 def classify_secrets(raw: dict[str, str]) -> list[EnvVar]:
     """Convert a flat key→value dict from Azure into a typed EnvVar list.
 

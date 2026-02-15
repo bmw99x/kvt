@@ -1,6 +1,6 @@
 """Unit tests for kvt.domain.secrets — pure parsing functions."""
 
-from kvt.domain.secrets import classify_secrets, is_multiline, parse_dotenv_blob
+from kvt.domain.secrets import classify_secrets, encode_dotenv_blob, is_multiline, parse_dotenv_blob
 from kvt.models import EnvVar
 
 
@@ -160,3 +160,59 @@ class TestClassifySecrets:
         raw = {"ENV": blob}
         result = classify_secrets(raw)
         assert result[0].value == blob
+
+
+class TestEncodeDotenvBlob:
+    def test_encodes_two_vars(self):
+        """
+        Given a list of two EnvVar instances
+        When encode_dotenv_blob is called
+        Then the result is KEY1=val1\\nKEY2=val2
+        """
+        vars = [EnvVar(key="DB_HOST", value="localhost"), EnvVar(key="DB_PORT", value="5432")]
+        assert encode_dotenv_blob(vars) == "DB_HOST=localhost\\nDB_PORT=5432"
+
+    def test_empty_list_produces_empty_string(self):
+        """
+        Given an empty list
+        When encode_dotenv_blob is called
+        Then the result is an empty string
+        """
+        assert encode_dotenv_blob([]) == ""
+
+    def test_single_var(self):
+        """
+        Given a list with one EnvVar
+        When encode_dotenv_blob is called
+        Then the result has no \\n separator
+        """
+        vars = [EnvVar(key="FOO", value="bar")]
+        assert encode_dotenv_blob(vars) == "FOO=bar"
+
+    def test_value_with_equals_sign(self):
+        """
+        Given an EnvVar whose value contains an = sign
+        When encode_dotenv_blob is called
+        Then the = in the value is preserved verbatim
+        """
+        vars = [EnvVar(key="TOKEN", value="abc=def==")]
+        assert encode_dotenv_blob(vars) == "TOKEN=abc=def=="
+
+    def test_empty_value_is_preserved(self):
+        """
+        Given an EnvVar with an empty value
+        When encode_dotenv_blob is called
+        Then the output is KEY= (not KEY)
+        """
+        vars = [EnvVar(key="EMPTY", value="")]
+        assert encode_dotenv_blob(vars) == "EMPTY="
+
+    def test_roundtrip_parse_then_encode(self):
+        """
+        Given a valid .env blob
+        When it is parsed then re-encoded
+        Then the result equals the original blob
+        """
+        blob = "DB_HOST=localhost\\nDB_PORT=5432\\nDB_NAME=appdb"
+        result = encode_dotenv_blob(parse_dotenv_blob(blob))
+        assert result == blob

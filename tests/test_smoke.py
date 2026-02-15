@@ -888,3 +888,87 @@ class TestMultilineSecrets:
             await pilot.press("escape")
             await pilot.pause()
             assert not isinstance(app.screen, MultilineViewScreen)
+
+    async def test_add_multiline_checkbox_creates_badge_row(self):
+        """
+        Given the AddScreen is open
+        When the user types a key, ticks the Multiline checkbox, and saves
+        Then the new row's value cell is a Rich Text badge (not a plain string)
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            await pilot.press("o")
+            assert isinstance(app.screen, AddScreen)
+
+            # Type the key
+            for ch in "MY_BLOB":
+                await pilot.press(ch)
+
+            # Tick the multiline checkbox (space toggles it)
+            await pilot.press("tab")  # move focus to checkbox
+            await pilot.press("space")  # tick it
+
+            # Shift-tab back to the key input, then enter to save
+            await pilot.press("shift+tab")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Find the new row and inspect its value cell
+            new_row = next(
+                (
+                    r
+                    for r in range(table.row_count)
+                    if str(table.get_cell_at(table.cursor_coordinate._replace(row=r, column=1)))
+                    == "MY_BLOB"
+                ),
+                None,
+            )
+            assert new_row is not None
+            value_cell = table.get_cell_at(table.cursor_coordinate._replace(row=new_row, column=2))
+            assert isinstance(value_cell, Text)
+
+    async def test_add_inner_var_and_save_updates_provider(self):
+        """
+        Given the MultilineViewScreen is open for the ENV secret
+        When the user adds an inner variable and presses s to save
+        Then the provider's value for ENV contains the new inner key
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            # Navigate to the ENV row
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(app.screen, MultilineViewScreen)
+
+            # Add an inner variable via o
+            await pilot.press("o")
+            assert isinstance(app.screen, AddScreen)
+            for ch in "NEW_INNER":
+                await pilot.press(ch)
+            await pilot.press("enter")  # move to value field
+            for ch in "myval":
+                await pilot.press(ch)
+            await pilot.press("enter")  # save
+            await pilot.pause()
+
+            # Back in MultilineViewScreen — save with s
+            assert isinstance(app.screen, MultilineViewScreen)
+            await pilot.press("s")
+            await pilot.pause()
+
+            # Provider blob should now include the new inner key
+            blob = cast(KvtApp, pilot.app)._provider.get("ENV")  # noqa: SLF001
+            assert blob is not None
+            assert "NEW_INNER=myval" in blob
