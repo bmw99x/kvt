@@ -111,13 +111,21 @@ class AzureClient:
                 "tsv",
             ]
         )
-        # tsv output strips surrounding quotes; strip trailing newline.
-        return result.rstrip("\n")
+        # tsv output appends a trailing newline of its own; remove exactly one.
+        value = result.removesuffix("\n")
+        # Azure stores multiline blobs with real newlines; normalise to the
+        # canonical literal-\n form that the domain layer expects.
+        return value.replace("\n", "\\n")
 
     def _set_via_file(self, name: str, value: str) -> None:
-        """Write a multiline value through a temporary file."""
+        """Write a multiline value through a temporary file.
+
+        The domain layer stores multiline blobs with literal ``\\n`` sequences;
+        expand them to real newlines before writing so Azure stores the value
+        correctly.
+        """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write(value)
+            f.write(value.replace("\\n", "\n"))
             tmp = Path(f.name)
         try:
             self._run(
