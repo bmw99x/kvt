@@ -8,7 +8,8 @@ from textual.reactive import reactive
 from textual import work
 from textual.widgets import Footer, Header, Input, LoadingIndicator
 
-from kvt.config import Config, load_config
+from kvt.azure.client import AzureClientError
+from kvt.config import Config, ConfigError, load_config
 from kvt.constants import APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
@@ -59,24 +60,32 @@ class KvtApp(App):
         Binding("tab", "cycle_env_next", show=False),
     ]
 
-    def __init__(self, provider: SecretProvider | None = None) -> None:
+    def __init__(
+        self,
+        provider: SecretProvider | None = None,
+        _use_config: bool = False,
+    ) -> None:
         super().__init__()
-        self._config: Config = load_config()
-        if self._config:
-            self._projects: dict[str, list[str]] = {
-                svc: list(envs.keys()) for svc, envs in self._config.items()
-            }
-            default_project = next(iter(self._projects))
-            default_env = self._projects[default_project][0]
-            self._using_mock = False
-        else:
-            self._projects = PROJECTS
+        self._config: Config = {}
+        if _use_config:
+            try:
+                self._config = load_config()
+            except ConfigError:
+                pass
+        if not _use_config or not self._config:
+            self._projects: dict[str, list[str]] = PROJECTS
             default_project = DEFAULT_PROJECT
             default_env = DEFAULT_ENV
             self._using_mock = True
+        else:
+            self._projects = {svc: list(envs.keys()) for svc, envs in self._config.items()}
+            default_project = next(iter(self._projects))
+            default_env = self._projects[default_project][0]
+            self._using_mock = False
 
         self._default_project = default_project
         self._default_env = default_env
+        self._provider_injected: bool = provider is not None
         self._provider: SecretProvider = provider or MockProvider(default_project, default_env)
         self._all_vars: list[EnvVar] = []
         self._filter: str = ""
@@ -103,10 +112,15 @@ class KvtApp(App):
 
     @work
     async def _load_initial(self) -> None:
-        """Simulate an initial data fetch on startup."""
+        """Fetch secrets on startup; surface provider errors as a toast."""
         self.loading = True
         await asyncio.sleep(0.3)
-        self._all_vars = self._provider.list_vars()
+        try:
+            self._all_vars = self._provider.list_vars()
+        except AzureClientError as exc:
+            self.loading = False
+            self.notify(f"Load failed: {exc}", severity="error", timeout=8)
+            return
         self.loading = False
         self._refresh_table()
         self._get_table().focus()
@@ -135,16 +149,27 @@ class KvtApp(App):
 
     def watch_current_env(self, env: str) -> None:
         """Reload provider data whenever the active environment changes."""
-        if self._using_mock:
-            self._provider = MockProvider(self.current_project, env)
-        else:
-            azure_env = self._config[self.current_project][env]
-            self._provider = AzureProvider(azure_env)
-        self._all_vars = self._provider.list_vars()
+        try:
+            if self._provider_injected:
+                pass  # keep the injected provider as-is; _load_initial handles the first load
+            elif self._using_mock:
+                self._provider = MockProvider(self.current_project, env)
+            else:
+                azure_env = self._config[self.current_project][env]
+                self._provider = AzureProvider(azure_env)
+            self._all_vars = self._provider.list_vars()
+        except KeyError as exc:
+            self.notify(
+                f"Config missing {self.current_project}/{env}: {exc}",
+                severity="error",
+                timeout=8,
+            )
+        except AzureClientError as exc:
+            self.notify(f"Load failed: {exc}", severity="error", timeout=8)
+            self._all_vars = []
         self._undo_stack.clear()
         self.dirty = False
         self._refresh_table()
-        # Sync the read-only tab indicator.
         tabs = self.query_one("#env-tabs", EnvTabs)
         tabs.current_env = env
         self._update_subtitle()
@@ -172,12 +197,20 @@ class KvtApp(App):
         self._get_table().load(vars)
 
     def _apply_set(self, key: str, value: str) -> None:
-        """Write a variable to the provider and sync local state."""
+        """Write a variable to the provider and sync local state.
+
+        On provider failure the undo stack and local cache are left unchanged
+        and an error notification is shown.
+        """
         previous = self._provider.get(key)
-        if previous is None:
-            self._provider.create(key, value)
-        else:
-            self._provider.update(key, value)
+        try:
+            if previous is None:
+                self._provider.create(key, value)
+            else:
+                self._provider.update(key, value)
+        except AzureClientError as exc:
+            self.notify(f"Write failed: {exc}", severity="error", timeout=8)
+            return
         self._all_vars = self._provider.list_vars()
         self._undo_stack.append(
             Action(kind=ActionKind.SET, key=key, value=value, previous_value=previous)
@@ -187,11 +220,19 @@ class KvtApp(App):
         self._update_subtitle()
 
     def _apply_delete(self, key: str) -> None:
-        """Delete a variable from the provider and sync local state."""
+        """Delete a variable from the provider and sync local state.
+
+        On provider failure the undo stack and local cache are left unchanged
+        and an error notification is shown.
+        """
         previous = self._provider.get(key)
         if previous is None:
             return
-        self._provider.delete(key)
+        try:
+            self._provider.delete(key)
+        except AzureClientError as exc:
+            self.notify(f"Delete failed: {exc}", severity="error", timeout=8)
+            return
         self._all_vars = self._provider.list_vars()
         self._undo_stack.append(Action(kind=ActionKind.DELETE, key=key, value=previous))
         self.dirty = True
@@ -416,7 +457,7 @@ class KvtApp(App):
 
 
 def main() -> None:
-    KvtApp().run()
+    KvtApp(_use_config=True).run()
 
 
 if __name__ == "__main__":

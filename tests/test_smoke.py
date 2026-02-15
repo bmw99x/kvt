@@ -7,7 +7,9 @@ from textual.widgets import Button, Input, Label
 from rich.text import Text
 
 from kvt.app import KvtApp
+from kvt.azure.client import AzureClientError
 from kvt.constants import DEFAULT_ENV, DEFAULT_PROJECT, MOCK_DATA, PROJECTS
+from kvt.models import EnvVar
 from kvt.providers import MockProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
@@ -1097,3 +1099,88 @@ class TestMultilineSecrets:
             await pilot.pause()
 
             assert isinstance(app.screen, ConfirmScreen)
+
+
+class _FailingProvider:
+    """Provider that raises AzureClientError on every mutating call."""
+
+    def __init__(self, fail_on_list: bool = False) -> None:
+        self._data: dict[str, str] = {"EXISTING": "value"}
+        self._fail_on_list = fail_on_list
+
+    def list_vars(self) -> list[EnvVar]:
+        if self._fail_on_list:
+            raise AzureClientError("vault unreachable")
+        return [EnvVar(key=k, value=v) for k, v in self._data.items()]
+
+    def get_raw(self) -> str:
+        return ""
+
+    def get(self, key: str) -> str | None:
+        return self._data.get(key)
+
+    def create(self, key: str, value: str) -> None:
+        raise AzureClientError("write permission denied")
+
+    def update(self, key: str, value: str) -> None:
+        raise AzureClientError("write permission denied")
+
+    def delete(self, key: str) -> None:
+        raise AzureClientError("delete permission denied")
+
+
+class TestErrorHandling:
+    async def test_load_failure_shows_notification(self):
+        """
+        Given a provider that raises AzureClientError on list_vars
+        When the app mounts
+        Then a toast notification is shown and the app does not crash
+        """
+        provider = _FailingProvider(fail_on_list=True)
+        async with KvtApp(provider=provider).run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            # App is still running and table is empty (not crashed)
+            assert app.query_one("#env-table", EnvTable).row_count == 0
+
+    async def test_write_failure_does_not_push_undo(self):
+        """
+        Given a provider that raises AzureClientError on create
+        When the user adds a new variable
+        Then the undo stack is unchanged and dirty remains False
+        """
+        provider = _FailingProvider()
+        async with KvtApp(provider=provider).run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("o")
+            for ch in "NEW_KEY":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "val":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert not app.dirty
+            assert len(app._undo_stack) == 0  # noqa: SLF001
+
+    async def test_delete_failure_does_not_push_undo(self):
+        """
+        Given a provider that raises AzureClientError on delete
+        When the user deletes a variable and confirms
+        Then the undo stack is unchanged and dirty remains False
+        """
+        provider = _FailingProvider()
+        async with KvtApp(provider=provider).run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.press("y")
+            await pilot.pause()
+
+            assert not app.dirty
+            assert len(app._undo_stack) == 0  # noqa: SLF001

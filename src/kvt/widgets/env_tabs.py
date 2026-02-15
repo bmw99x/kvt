@@ -1,5 +1,7 @@
 """Horizontal environment indicator bar with project label (read-only)."""
 
+import re
+
 from textual.app import ComposeResult
 from textual.events import Click
 from textual.message import Message
@@ -8,6 +10,17 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from kvt.constants import DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
+
+
+def _tab_id(env: str) -> str:
+    """Return a valid Textual widget ID for an env name.
+
+    Replaces any character that is not a letter, digit, underscore, or hyphen
+    with a hyphen, then collapses consecutive hyphens.
+    """
+    slug = re.sub(r"[^A-Za-z0-9_-]", "-", env)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return f"tab-{slug}"
 
 
 class EnvTabs(Widget):
@@ -45,15 +58,16 @@ class EnvTabs(Widget):
         super().__init__(id=id, classes=classes)
         self._projects = projects if projects is not None else PROJECTS
 
+    def _make_tab(self, env: str, active: bool) -> Static:
+        """Create a tab Static with the env stored in a data attribute."""
+        tab = Static(env, id=_tab_id(env), classes="tab active" if active else "tab")
+        tab.data_env = env  # type: ignore[attr-defined]
+        return tab
+
     def compose(self) -> ComposeResult:
         yield Static(f"{DEFAULT_PROJECT} ▸", id="env-tabs-project", classes="tab-project")
         for env in self._projects.get(DEFAULT_PROJECT, []):
-            active = env == DEFAULT_ENV
-            yield Static(
-                env,
-                id=f"tab-{env}",
-                classes="tab active" if active else "tab",
-            )
+            yield self._make_tab(env, active=env == DEFAULT_ENV)
 
     async def watch_current_project(self, project: str) -> None:
         """Rebuild env tabs when the project changes."""
@@ -62,23 +76,14 @@ class EnvTabs(Widget):
         # Await removal so the DOM is clean before mounting new tabs.
         await self.query(".tab").remove()
 
-        # Mount new env tabs for the new project.
         envs = self._projects.get(project, [])
-        await self.mount(
-            *[
-                Static(
-                    env,
-                    id=f"tab-{env}",
-                    classes="tab active" if env == self.current_env else "tab",
-                )
-                for env in envs
-            ]
-        )
+        await self.mount(*[self._make_tab(env, active=env == self.current_env) for env in envs])
 
     def watch_current_env(self, env: str) -> None:
         """Highlight the active env tab."""
+        tab_id = _tab_id(env)
         for tab in self.query(".tab"):
-            if tab.id == f"tab-{env}":
+            if tab.id == tab_id:
                 tab.add_class("active")
             else:
                 tab.remove_class("active")
@@ -86,11 +91,9 @@ class EnvTabs(Widget):
     def on_click(self, event: Click) -> None:
         """Navigate to the clicked environment tab."""
         widget = event.widget
-        if (
-            widget is not None
-            and widget.has_class("tab")
-            and widget.id
-            and widget.id.startswith("tab-")
-        ):
-            env = widget.id[len("tab-") :]
-            self.post_message(EnvTabs.TabClicked(env))
+        if widget is None or not widget.has_class("tab") or not widget.id:
+            return
+        env: str | None = getattr(widget, "data_env", None)
+        if env is None:
+            return
+        self.post_message(EnvTabs.TabClicked(env))
