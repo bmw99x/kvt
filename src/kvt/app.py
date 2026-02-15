@@ -39,8 +39,8 @@ class KvtApp(App):
 
     dirty: reactive[bool] = reactive(False)
     loading: reactive[bool] = reactive(False)
-    current_env: reactive[str] = reactive(DEFAULT_ENV)
-    current_project: reactive[str] = reactive(DEFAULT_PROJECT)
+    current_env: reactive[str] = reactive("")
+    current_project: reactive[str] = reactive("")
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
@@ -149,6 +149,8 @@ class KvtApp(App):
 
     def watch_current_env(self, env: str) -> None:
         """Reload provider data whenever the active environment changes."""
+        if not env or not self.current_project:
+            return
         try:
             if self._provider_injected:
                 pass  # keep the injected provider as-is; _load_initial handles the first load
@@ -176,6 +178,8 @@ class KvtApp(App):
 
     def watch_current_project(self, project: str) -> None:
         """Push the new project into the tab bar and update subtitle."""
+        if not project:
+            return
         self.query_one("#env-tabs", EnvTabs).current_project = project
         self._update_subtitle()
 
@@ -183,6 +187,16 @@ class KvtApp(App):
         """Handle a tab click — same confirm-navigate flow as pressing e."""
         event.stop()
         self._confirm_navigate(self.current_project, event.env)
+
+    def on_env_tabs_project_clicked(self, event: EnvTabs.ProjectClicked) -> None:
+        """Open the context picker when the project label is clicked."""
+        event.stop()
+        self.action_pick_context()
+
+    def on_env_table_row_double_clicked(self, event: EnvTable.RowDoubleClicked) -> None:
+        """Open the appropriate edit modal on double-click."""
+        event.stop()
+        self.action_edit_var()
 
     def _get_table(self) -> EnvTable:
         return self.query_one("#env-table", EnvTable)

@@ -2,6 +2,8 @@
 
 from rich.text import Text
 from textual.binding import Binding
+from textual.events import Click
+from textual.message import Message
 from textual.widgets import DataTable
 
 from kvt.constants import TABLE_COLUMNS
@@ -20,7 +22,13 @@ class EnvTable(DataTable):
     cyan ``[ env ]`` badge in the value column instead of the raw blob, so
     the distinction is immediately visible.  Pressing Enter/i on such a row
     opens a drill-in modal (handled by the app).
+
+    Double-clicking a row posts ``EnvTable.RowDoubleClicked`` so the app
+    can open the appropriate edit modal without any keyboard interaction.
     """
+
+    class RowDoubleClicked(Message):
+        """Posted when the user double-clicks a row."""
 
     BINDINGS = [
         Binding("j", "cursor_down", show=False),
@@ -58,3 +66,8 @@ class EnvTable(DataTable):
             return False
         cell = self.get_cell_at(self.cursor_coordinate._replace(column=2))
         return isinstance(cell, Text)
+
+    def on_click(self, event: Click) -> None:
+        """Post RowDoubleClicked on a double-click (chain == 2)."""
+        if event.chain == 2 and self.row_count > 0:
+            self.post_message(EnvTable.RowDoubleClicked())

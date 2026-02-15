@@ -42,6 +42,9 @@ class EnvTabs(Widget):
             super().__init__()
             self.env = env
 
+    class ProjectClicked(Message):
+        """Posted when the user clicks the project label."""
+
     can_focus = False
     BINDINGS = []
 
@@ -89,11 +92,14 @@ class EnvTabs(Widget):
                 tab.remove_class("active")
 
     def on_click(self, event: Click) -> None:
-        """Navigate to the clicked environment tab."""
+        """Handle clicks on the project label and environment tabs."""
         widget = event.widget
-        if widget is None or not widget.has_class("tab") or not widget.id:
+        if widget is None:
             return
-        env: str | None = getattr(widget, "data_env", None)
-        if env is None:
+        if widget.id == "env-tabs-project":
+            self.post_message(EnvTabs.ProjectClicked())
             return
-        self.post_message(EnvTabs.TabClicked(env))
+        if widget.has_class("tab") and widget.id:
+            env: str | None = getattr(widget, "data_env", None)
+            if env is not None:
+                self.post_message(EnvTabs.TabClicked(env))

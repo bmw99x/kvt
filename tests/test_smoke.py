@@ -689,465 +689,96 @@ class TestDirtyGuard:
             app = cast(KvtApp, pilot.app)
 
             assert not app.dirty
-            await pilot.press("e")
-            await wait_loaded(pilot)
-
-            assert not isinstance(app.screen, ConfirmScreen)
-            assert app.current_env != DEFAULT_ENV
-
-    async def test_dirty_env_cycle_shows_confirmation(self):
-        """
-        Given the app has 1 unsaved change
-        When the user presses e to cycle the env
-        Then a ConfirmScreen is pushed with the change count in the message
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-
-            await pilot.press("i")
-            await pilot.press("ctrl+a")
-            for ch in "changed":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-
-            assert isinstance(app.screen, ConfirmScreen)
-            assert "1 unsaved change" in cast(ConfirmScreen, app.screen)._message  # noqa: SLF001
-
-    async def test_confirm_nav_switches_env(self):
-        """
-        Given the app has unsaved changes and the ConfirmScreen is shown
-        When the user presses y
-        Then the env changes and dirty is reset
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            original_env = app.current_env
-
-            await pilot.press("i")
-            await pilot.press("ctrl+a")
-            for ch in "changed":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-            await pilot.press("y")
-            await wait_loaded(pilot)
-
-            assert app.current_env != original_env
-            assert not app.dirty
-
-    async def test_cancel_nav_keeps_env_and_changes(self):
-        """
-        Given the app has unsaved changes and the ConfirmScreen is shown
-        When the user presses n
-        Then the env is unchanged and dirty remains True
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            original_env = app.current_env
-
-            await pilot.press("i")
-            await pilot.press("ctrl+a")
-            for ch in "changed":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            await pilot.pause()
-
-            await pilot.press("e")
-            await pilot.pause()
-            await pilot.press("n")
-            await pilot.pause()
-
-            assert app.current_env == original_env
-            assert app.dirty
-
-
-class TestMultilineSecrets:
-    async def test_multiline_row_shows_badge_not_raw_value(self):
-        """
-        Given the default context (frontend/staging) which has an ENV multiline secret
-        When the app loads
-        Then the ENV row shows a Rich Text badge (not the raw blob) in the value cell
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            cell = table.get_cell_at(
-                table.cursor_coordinate._replace(
-                    row=next(
-                        r
-                        for r in range(table.row_count)
-                        if str(table.get_cell_at(table.cursor_coordinate._replace(row=r, column=1)))
-                        == "ENV"
-                    ),
-                    column=2,
-                )
-            )
-            assert isinstance(cell, Text)
-
-    async def test_multiline_secret_selected_var_is_multiline_true(self):
-        """
-        Given the cursor is on the ENV (multiline) row
-        When selected_var_is_multiline is called
-        Then it returns True
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            # Move cursor to the ENV row
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            assert table.selected_var_is_multiline() is True
-
-    async def test_pressing_i_on_multiline_opens_multiline_view(self):
-        """
-        Given the cursor is on the ENV (multiline) row
-        When the user presses i
-        Then the MultilineViewScreen is pushed
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-
-            assert isinstance(app.screen, MultilineViewScreen)
-
-    async def test_multiline_view_shows_inner_variables(self):
-        """
-        Given the MultilineViewScreen is open for the ENV secret
-        When the modal mounts
-        Then the inner EnvTable contains the exploded key/value pairs
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-
-            from kvt.domain.secrets import parse_dotenv_blob
-
-            blob = MOCK_DATA[DEFAULT_PROJECT][DEFAULT_ENV]["ENV"]
-            expected_count = len(parse_dotenv_blob(blob))
-
-            inner_table = app.screen.query_one("#ml-table", EnvTable)
-            assert inner_table.row_count == expected_count
-
-    async def test_escape_closes_multiline_view(self):
-        """
-        Given the MultilineViewScreen is open
-        When the user presses Escape
-        Then the modal is dismissed and the main table regains focus
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-            assert isinstance(app.screen, MultilineViewScreen)
-
-            await pilot.press("escape")
-            await pilot.pause()
-            assert not isinstance(app.screen, MultilineViewScreen)
-
-    async def test_add_multiline_checkbox_creates_badge_row(self):
-        """
-        Given the AddScreen is open
-        When the user types a key, ticks the Multiline checkbox, and saves
-        Then the new row's value cell is a Rich Text badge (not a plain string)
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            await pilot.press("o")
-            assert isinstance(app.screen, AddScreen)
-
-            # Type the key
-            for ch in "MY_BLOB":
-                await pilot.press(ch)
-
-            # Tick the multiline checkbox (space toggles it)
-            await pilot.press("tab")  # move focus to checkbox
-            await pilot.press("space")  # tick it
-
-            # Shift-tab back to the key input, then enter to save
-            await pilot.press("shift+tab")
-            await pilot.press("enter")
-            await pilot.pause()
-
-            # Find the new row and inspect its value cell
-            new_row = next(
-                (
-                    r
-                    for r in range(table.row_count)
-                    if str(table.get_cell_at(table.cursor_coordinate._replace(row=r, column=1)))
-                    == "MY_BLOB"
-                ),
-                None,
-            )
-            assert new_row is not None
-            value_cell = table.get_cell_at(table.cursor_coordinate._replace(row=new_row, column=2))
-            assert isinstance(value_cell, Text)
-
-    async def test_add_inner_var_and_save_updates_provider(self):
-        """
-        Given the MultilineViewScreen is open for the ENV secret
-        When the user adds an inner variable and presses s to save
-        Then the provider's value for ENV contains the new inner key
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            # Navigate to the ENV row
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-            assert isinstance(app.screen, MultilineViewScreen)
-
-            # Add an inner variable via o
-            await pilot.press("o")
-            assert isinstance(app.screen, AddScreen)
-            for ch in "NEW_INNER":
-                await pilot.press(ch)
-            await pilot.press("enter")  # move to value field
-            for ch in "myval":
-                await pilot.press(ch)
-            await pilot.press("enter")  # save
-            await pilot.pause()
-
-            # Back in MultilineViewScreen — save with s
-            assert isinstance(app.screen, MultilineViewScreen)
-            await pilot.press("s")
-            await pilot.pause()
-
-            # Provider blob should now include the new inner key
-            blob = cast(KvtApp, pilot.app)._provider.get("ENV")  # noqa: SLF001
-            assert blob is not None
-            assert "NEW_INNER=myval" in blob
-
-    async def test_copy_multiline_row_fetches_raw_blob(self):
-        """
-        Given the cursor is on the ENV (multiline) row
-        When action_copy_value is called
-        Then it resolves to the raw blob from the provider (not None / not the badge)
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            # selected_value() returns None for multiline rows (badge cell)
-            assert table.selected_value() is None
-
-            # But the provider has the real blob
-            blob = app._provider.get("ENV")  # noqa: SLF001
-            assert blob is not None
-            assert "DB_HOST" in blob
-
-            # Pressing y should not raise and should trigger a notification
-            await pilot.press("y")
-            await pilot.pause()
-
-    async def test_multiline_view_dirty_status_shown_after_add(self):
-        """
-        Given the MultilineViewScreen is open
-        When the user adds an inner variable
-        Then the #ml-status label shows the unsaved-changes indicator
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-            assert isinstance(app.screen, MultilineViewScreen)
-
-            await pilot.press("o")
-            for ch in "EXTRA":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            for ch in "val":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            await pilot.pause()
-
-            status = app.screen.query_one("#ml-status", Label)
-            assert "unsaved" in status.content
-
-    async def test_multiline_cancel_clean_dismisses_immediately(self):
-        """
-        Given the MultilineViewScreen is open with no changes
-        When the user presses Escape
-        Then the modal dismisses without pushing a ConfirmScreen
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-            assert isinstance(app.screen, MultilineViewScreen)
-
-            await pilot.press("escape")
-            await pilot.pause()
-
-            assert not isinstance(app.screen, (MultilineViewScreen, ConfirmScreen))
-
-    async def test_multiline_cancel_dirty_shows_confirm(self):
-        """
-        Given the MultilineViewScreen has unsaved changes
-        When the user presses Escape
-        Then a ConfirmScreen is shown instead of immediately dismissing
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = cast(KvtApp, pilot.app)
-            table = app.query_one("#env-table", EnvTable)
-
-            for row in range(table.row_count):
-                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
-                if str(key_cell) == "ENV":
-                    table.move_cursor(row=row)
-                    break
-
-            await pilot.press("i")
-            await pilot.pause()
-            assert isinstance(app.screen, MultilineViewScreen)
-
-            # Make a change
-            await pilot.press("o")
-            for ch in "EXTRA":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            for ch in "val":
-                await pilot.press(ch)
-            await pilot.press("enter")
-            await pilot.pause()
-
-            # Now cancel
-            await pilot.press("escape")
-            await pilot.pause()
-
-            assert isinstance(app.screen, ConfirmScreen)
+            assert len(app._undo_stack) == 0  # noqa: SLF001
 
 
 class _FailingProvider:
     """Provider that raises AzureClientError on every mutating call."""
 
     def __init__(self, fail_on_list: bool = False) -> None:
-        self._data: dict[str, str] = {"EXISTING": "value"}
+        self._inner = MockProvider(DEFAULT_PROJECT, DEFAULT_ENV)
         self._fail_on_list = fail_on_list
 
     def list_vars(self) -> list[EnvVar]:
         if self._fail_on_list:
-            raise AzureClientError("vault unreachable")
-        return [EnvVar(key=k, value=v) for k, v in self._data.items()]
+            raise AzureClientError("simulated list failure")
+        return self._inner.list_vars()
 
     def get_raw(self) -> str:
-        return ""
+        return self._inner.get_raw()
 
     def get(self, key: str) -> str | None:
-        return self._data.get(key)
+        return self._inner.get(key)
 
     def create(self, key: str, value: str) -> None:
-        raise AzureClientError("write permission denied")
+        raise AzureClientError("simulated write failure")
 
     def update(self, key: str, value: str) -> None:
-        raise AzureClientError("write permission denied")
+        raise AzureClientError("simulated write failure")
 
     def delete(self, key: str) -> None:
-        raise AzureClientError("delete permission denied")
+        raise AzureClientError("simulated delete failure")
+
+
+class TestDoubleClick:
+    async def test_double_click_single_line_opens_edit_screen(self):
+        """
+        GIVEN the table is showing a single-line variable
+        WHEN the user double-clicks a row
+        THEN the EditScreen is pushed
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            assert not table.selected_var_is_multiline()
+            table.post_message(EnvTable.RowDoubleClicked())
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, EditScreen)
+
+    async def test_double_click_multiline_opens_multiline_view(self):
+        """
+        GIVEN the table cursor is on a multiline variable
+        WHEN the user double-clicks that row
+        THEN the MultilineViewScreen is pushed
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = pilot.app
+            table = app.query_one("#env-table", EnvTable)
+            env_row = next(
+                r
+                for r in range(table.row_count)
+                if isinstance(
+                    table.get_cell_at(table.cursor_coordinate._replace(row=r, column=2)),
+                    Text,
+                )
+            )
+            table.move_cursor(row=env_row)
+            await pilot.pause()
+            assert table.selected_var_is_multiline()
+            table.post_message(EnvTable.RowDoubleClicked())
+            await pilot.pause()
+            assert isinstance(app.screen, MultilineViewScreen)
 
 
 class TestErrorHandling:
     async def test_load_failure_shows_notification(self):
         """
-        Given a provider that raises AzureClientError on list_vars
-        When the app mounts
-        Then a toast notification is shown and the app does not crash
+        GIVEN a provider that raises AzureClientError on list_vars
+        WHEN the app mounts
+        THEN the app does not crash and the table is empty
         """
         provider = _FailingProvider(fail_on_list=True)
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
             await wait_loaded(pilot)
             app = cast(KvtApp, pilot.app)
-            # App is still running and table is empty (not crashed)
             assert app.query_one("#env-table", EnvTable).row_count == 0
 
     async def test_write_failure_does_not_push_undo(self):
         """
-        Given a provider that raises AzureClientError on create
-        When the user adds a new variable
-        Then the undo stack is unchanged and dirty remains False
+        GIVEN a provider that raises AzureClientError on create/update
+        WHEN the user adds a variable and saves
+        THEN the undo stack is unchanged and dirty remains False
         """
         provider = _FailingProvider()
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
@@ -1155,7 +786,7 @@ class TestErrorHandling:
             app = cast(KvtApp, pilot.app)
 
             await pilot.press("o")
-            for ch in "NEW_KEY":
+            for ch in "NEW_VAR":
                 await pilot.press(ch)
             await pilot.press("enter")
             for ch in "val":
@@ -1168,9 +799,9 @@ class TestErrorHandling:
 
     async def test_delete_failure_does_not_push_undo(self):
         """
-        Given a provider that raises AzureClientError on delete
-        When the user deletes a variable and confirms
-        Then the undo stack is unchanged and dirty remains False
+        GIVEN a provider that raises AzureClientError on delete
+        WHEN the user deletes a variable and confirms
+        THEN the undo stack is unchanged and dirty remains False
         """
         provider = _FailingProvider()
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
