@@ -29,10 +29,6 @@ class AzureClient:
         self._vault = vault_name
         self._subscription = subscription_id
 
-    # ------------------------------------------------------------------
-    # Read operations
-    # ------------------------------------------------------------------
-
     def list_secrets(self) -> dict[str, str]:
         """Return all enabled secrets as a key→value dict.
 
@@ -45,10 +41,6 @@ class AzureClient:
     def get_secret(self, name: str) -> str:
         """Return the current value of a single secret."""
         return self._get_value(name)
-
-    # ------------------------------------------------------------------
-    # Write operations
-    # ------------------------------------------------------------------
 
     def set_secret(self, name: str, value: str) -> None:
         """Create or update a secret.
@@ -79,10 +71,6 @@ class AzureClient:
         self._run(
             ["az", "keyvault", "secret", "delete", "--vault-name", self._vault, "--name", name]
         )
-
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
 
     def _list_names(self) -> list[str]:
         result = self._run(

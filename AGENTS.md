@@ -52,8 +52,12 @@ tests/
 - **Python 3.13**, modern type syntax (`X | Y`, `list[X]`, no `Optional`)
 - Formatter and linter: `ruff`. Line length 100.
 - Type checker: `ty`.
-- Docstrings on all public classes and non-trivial methods. No inline banner
-  comments (`# -----`); use docstrings or split into a new file instead.
+- Docstrings on all public classes and non-trivial methods.
+- **No section-divider comments.** Never use `# --- Read operations ---`,
+  `# ------------------------------------------------------------------`,
+  or any equivalent banner/divider comment to group methods. If a class
+  needs that kind of organisation, split it into multiple files or use
+  docstrings. The code should be self-evident without decoration.
 - Constants (strings, column names, etc.) live in `constants.py`, not inline.
 - UI components are composed — one class per file under `screens/` or
   `widgets/`. `app.py` must stay thin (wiring only, no business logic).

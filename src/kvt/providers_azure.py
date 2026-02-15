@@ -22,10 +22,6 @@ class AzureProvider:
         self._client = AzureClient(env.vault_name, env.subscription_id)
         self._data: dict[str, str] = self._client.list_secrets()
 
-    # ------------------------------------------------------------------
-    # SecretProvider protocol
-    # ------------------------------------------------------------------
-
     def list_vars(self) -> list[EnvVar]:
         """Return all secrets, tagged as multiline where appropriate."""
         return classify_secrets(self._data)
