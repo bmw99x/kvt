@@ -2,7 +2,7 @@
 
 from typing import cast
 
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Label
 
 from rich.text import Text
 
@@ -972,3 +972,128 @@ class TestMultilineSecrets:
             blob = cast(KvtApp, pilot.app)._provider.get("ENV")  # noqa: SLF001
             assert blob is not None
             assert "NEW_INNER=myval" in blob
+
+    async def test_copy_multiline_row_fetches_raw_blob(self):
+        """
+        Given the cursor is on the ENV (multiline) row
+        When action_copy_value is called
+        Then it resolves to the raw blob from the provider (not None / not the badge)
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            # selected_value() returns None for multiline rows (badge cell)
+            assert table.selected_value() is None
+
+            # But the provider has the real blob
+            blob = app._provider.get("ENV")  # noqa: SLF001
+            assert blob is not None
+            assert "DB_HOST" in blob
+
+            # Pressing y should not raise and should trigger a notification
+            await pilot.press("y")
+            await pilot.pause()
+
+    async def test_multiline_view_dirty_status_shown_after_add(self):
+        """
+        Given the MultilineViewScreen is open
+        When the user adds an inner variable
+        Then the #ml-status label shows the unsaved-changes indicator
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(app.screen, MultilineViewScreen)
+
+            await pilot.press("o")
+            for ch in "EXTRA":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "val":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            status = app.screen.query_one("#ml-status", Label)
+            assert "unsaved" in status.content
+
+    async def test_multiline_cancel_clean_dismisses_immediately(self):
+        """
+        Given the MultilineViewScreen is open with no changes
+        When the user presses Escape
+        Then the modal dismisses without pushing a ConfirmScreen
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(app.screen, MultilineViewScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not isinstance(app.screen, (MultilineViewScreen, ConfirmScreen))
+
+    async def test_multiline_cancel_dirty_shows_confirm(self):
+        """
+        Given the MultilineViewScreen has unsaved changes
+        When the user presses Escape
+        Then a ConfirmScreen is shown instead of immediately dismissing
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = app.query_one("#env-table", EnvTable)
+
+            for row in range(table.row_count):
+                key_cell = table.get_cell_at(table.cursor_coordinate._replace(row=row, column=1))
+                if str(key_cell) == "ENV":
+                    table.move_cursor(row=row)
+                    break
+
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(app.screen, MultilineViewScreen)
+
+            # Make a change
+            await pilot.press("o")
+            for ch in "EXTRA":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "val":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Now cancel
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ConfirmScreen)

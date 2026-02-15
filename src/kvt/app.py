@@ -299,10 +299,20 @@ class KvtApp(App):
         table.move_cursor(row=table.row_count - 1)
 
     def action_copy_value(self) -> None:
-        """Copy the selected row's value to the system clipboard."""
+        """Copy the selected row's value to the system clipboard.
+
+        For multiline rows the raw blob is fetched from the provider and
+        copied verbatim (the badge in the table is not the real value).
+        """
         value = self._get_table().selected_value()
         if value is None:
-            return
+            # Multiline row — copy the raw blob.
+            key = self._selected_key()
+            if key is None:
+                return
+            value = self._provider.get(key)
+            if value is None:
+                return
         self.app.copy_to_clipboard(value)
         self.notify("Copied value to clipboard", timeout=2)
 

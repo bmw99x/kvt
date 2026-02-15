@@ -14,6 +14,7 @@ from textual.widgets import Label
 from kvt.domain.secrets import encode_dotenv_blob, parse_dotenv_blob
 from kvt.models import EnvVar
 from kvt.screens.add import AddScreen
+from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.edit import EditScreen
 from kvt.widgets.env_table import EnvTable
 
@@ -45,6 +46,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
         self._original_blob = blob
         self._vars: list[EnvVar] = parse_dotenv_blob(blob)
         self._d_pressed = False
+        self._dirty = False
 
     def compose(self) -> ComposeResult:
         yield Label(f"  {self._secret_name}", id="ml-title")
@@ -62,6 +64,10 @@ class MultilineViewScreen(ModalScreen[str | None]):
         count = len(self._vars)
         self.query_one("#ml-title", Label).update(f"  {self._secret_name}  ·  {count} variable(s)")
 
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+        self.query_one("#ml-status", Label).update("● unsaved changes")
+
     def _table(self) -> EnvTable:
         return self.query_one("#ml-table", EnvTable)
 
@@ -73,7 +79,17 @@ class MultilineViewScreen(ModalScreen[str | None]):
         return str(cell)
 
     def action_cancel(self) -> None:
-        self.dismiss(None)
+        if not self._dirty:
+            self.dismiss(None)
+            return
+
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self.dismiss(None)
+            else:
+                self._table().focus()
+
+        self.app.push_screen(ConfirmScreen("Discard unsaved changes?"), on_confirm)
 
     def action_save(self) -> None:
         self.dismiss(encode_dotenv_blob(self._vars))
@@ -97,6 +113,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
         def on_save(var: EnvVar | None) -> None:
             if var is not None:
                 self._vars.append(var)
+                self._mark_dirty()
                 self._reload_table()
                 self._table().move_cursor(row=len(self._vars) - 1)
             self._table().focus()
@@ -114,6 +131,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
         def on_save(new_value: str | None) -> None:
             if new_value is not None:
                 var.value = new_value
+                self._mark_dirty()
                 self._reload_table()
             self._table().focus()
 
@@ -126,6 +144,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
             if key is None:
                 return
             self._vars = [v for v in self._vars if v.key != key]
+            self._mark_dirty()
             self._reload_table()
             self._table().focus()
         else:
