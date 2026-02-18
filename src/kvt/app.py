@@ -33,7 +33,6 @@ class KvtApp(App):
         "app.tcss",
         "widgets/env_tabs.tcss",
         "widgets/main_view.tcss",
-        "screens/context_picker.tcss",
         "screens/multiline_view.tcss",
     ]
     TITLE = APP_TITLE
