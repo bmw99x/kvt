@@ -20,8 +20,6 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
     BINDINGS = [
         Binding("escape", "cancel", show=False),
         Binding("q", "cancel", show=False),
-        Binding("j", "cursor_down", show=False),
-        Binding("k", "cursor_up", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -120,6 +118,10 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
                 option_list.highlighted = idx
                 break
         
+        # Add j/k key bindings directly to OptionList
+        option_list.bind("j", "cursor_down", show=False)
+        option_list.bind("k", "cursor_up", show=False)
+        
         option_list.focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -128,12 +130,6 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
         if 0 <= option_index < len(self._index_map):
             pair = self._index_map[option_index]
             self.dismiss(pair)
-
-    def action_cursor_down(self) -> None:
-        self.query_one("#picker-list", OptionList).action_cursor_down()
-
-    def action_cursor_up(self) -> None:
-        self.query_one("#picker-list", OptionList).action_cursor_up()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
