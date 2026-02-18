@@ -76,6 +76,43 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
         if target_list_index is not None:
             list_view.index = target_list_index
         list_view.focus()
+        # Update the prefix for initial highlight
+        self._update_highlight_prefix(list_view.index)
+
+    def _update_highlight_prefix(self, highlighted_index: int | None) -> None:
+        """Update the prefix symbols for all env items based on cursor position."""
+        if highlighted_index is None:
+            return
+        
+        list_view = self.query_one("#picker-list", ListView)
+        idx = 0
+        for project, envs in self._projects.items():
+            idx += 1  # skip project header
+            for env in envs:
+                is_current = project == self._current_project and env == self._current_env
+                is_highlighted = idx == highlighted_index
+                
+                # Get the list item
+                try:
+                    item = list_view.children[idx]
+                    static = item.query_one(Static)
+                    
+                    # Update label based on state
+                    if is_highlighted and is_current:
+                        static.update(f"  → {env}")  # Highlighted + active
+                    elif is_highlighted:
+                        static.update(f"  → {env}")  # Highlighted
+                    elif is_current:
+                        static.update(f"  → {env}")  # Active (already shown)
+                    else:
+                        static.update(f"      {env}")  # Normal
+                except (IndexError, AttributeError):
+                    pass
+                idx += 1
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Update prefix when cursor moves."""
+        self._update_highlight_prefix(event.list_view.index)
 
     def _selectable_to_list_index(self, project: str, env: str) -> int | None:
         """Return the ListView index (including non-selectable headers) for a given pair."""

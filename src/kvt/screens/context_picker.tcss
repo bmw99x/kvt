@@ -56,9 +56,17 @@ ContextPickerScreen {
     text-style: bold;
 }
 
+.picker-env-item:focus-within .picker-env {
+    color: $text;
+}
+
 .picker-env-item--highlight {
     background: $primary;
     text-style: bold;
+}
+
+.picker-env-item--highlight .picker-env {
+    color: $text;
 }
 
 .picker-env {
@@ -73,4 +81,9 @@ ContextPickerScreen {
 
 .picker-env-active .picker-env {
     color: $text;
+}
+
+/* When highlighted item is also the active item, use brighter color */
+.picker-env-active:focus-within {
+    background: $primary;
 }
