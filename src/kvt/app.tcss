@@ -99,6 +99,10 @@ ConfirmScreen {
     color: $text-muted;
 }
 
+#add-multiline {
+    margin-bottom: 1;
+}
+
 #add-error {
     color: $error;
     height: 1;

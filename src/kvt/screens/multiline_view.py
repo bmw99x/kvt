@@ -66,7 +66,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
         table.focus()
         # Focus first row if available
         if table.row_count > 0:
-            table.cursor_coordinate = (0, 0)
+            table.move_cursor(row=0)
 
     def _reload_table(self) -> None:
         table = self.query_one("#ml-table", EnvTable)
@@ -131,7 +131,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
                 self._table().move_cursor(row=len(self._vars) - 1)
             self._table().focus()
 
-        self.app.push_screen(AddScreen(existing_keys=existing), on_save)
+        self.app.push_screen(AddScreen(existing_keys=existing, allow_multiline=False), on_save)
 
     def action_edit_var(self) -> None:
         key = self._selected_key()

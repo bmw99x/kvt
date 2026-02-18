@@ -22,6 +22,7 @@ from kvt.screens.edit import EditScreen
 from kvt.screens.help import HelpScreen
 from kvt.screens.multiline_view import MultilineViewScreen
 from kvt.screens.rename import RenameScreen
+from kvt.screens.save_confirm import SaveConfirmScreen
 from kvt.widgets.env_table import EnvTable
 from kvt.widgets.env_tabs import EnvTabs
 from kvt.widgets.main_view import MainView
@@ -35,6 +36,7 @@ class KvtApp(App):
         "widgets/env_tabs.tcss",
         "widgets/main_view.tcss",
         "screens/multiline_view.tcss",
+        "screens/save_confirm.tcss",
     ]
     TITLE = APP_TITLE
 
@@ -57,6 +59,7 @@ class KvtApp(App):
         Binding("o", "add_var", "Add"),
         Binding("d", "delete_var", "dd Delete"),
         Binding("u", "undo", "Undo"),
+        Binding("s", "save_changes", "Save"),
         Binding("p", "pick_context", "Project"),
         Binding("e", "cycle_env_next", "Env"),
         Binding("tab", "cycle_env_next", show=False),
@@ -87,10 +90,13 @@ class KvtApp(App):
         self._default_env = default_env
         self._provider_injected: bool = provider is not None
         self._provider: SecretProvider = provider or MockProvider(default_project, default_env)
+        # _all_vars is the local working copy (includes uncommitted staged changes).
         self._all_vars: list[EnvVar] = []
         self._filter: str = ""
         self._g_pressed: bool = False
         self._d_pressed: bool = False
+        # _undo_stack holds staged (uncommitted) changes.  Nothing is written to
+        # the provider until the user confirms via SaveConfirmScreen.
         self._undo_stack: list[Action] = []
         self._project_env_memory: dict[str, str] = {
             p: envs[0] for p, envs in self._projects.items()
@@ -103,12 +109,10 @@ class KvtApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Apply config-derived defaults now that the DOM is ready.
         self.current_project = self._default_project
         self.current_env = self._default_env
         self.query_one("#search", Input).display = False
         self.query_one("#loading", LoadingIndicator).display = False
-        # Load and apply saved theme
         saved_theme = load_theme()
         if saved_theme:
             self.theme = saved_theme
@@ -118,7 +122,6 @@ class KvtApp(App):
     async def _load_initial(self) -> None:
         """Fetch secrets on startup using hybrid loading."""
         try:
-            # For mock provider, just load everything
             if self._using_mock or self._provider_injected:
                 self._all_vars = self._provider.list_vars()
                 self._refresh_table()
@@ -126,17 +129,14 @@ class KvtApp(App):
                 self._update_subtitle()
                 return
 
-            # For Azure provider, use hybrid loading
             azure_env = self._config[self.current_project][self.current_env]
             self._provider = HybridAzureProvider(azure_env)
 
-            # Show list immediately (fast operation - just names)
             self._all_vars = self._provider.list_vars()
             self._refresh_table()
             self._get_table().focus()
             self._update_subtitle()
 
-            # Fetch values in background
             self._fetch_values_background()
 
         except (AzureClientError, KeyError) as exc:
@@ -152,7 +152,6 @@ class KvtApp(App):
 
         try:
             self._provider.fetch_all_values()
-            # Update UI on main thread
             self.call_from_thread(self._update_values)
         except AzureClientError:
             self.call_from_thread(
@@ -195,17 +194,14 @@ class KvtApp(App):
             return
         try:
             if self._provider_injected:
-                pass  # keep the injected provider as-is; _load_initial handles the first load
+                pass
             elif self._using_mock:
                 self._provider = MockProvider(self.current_project, env)
                 self._all_vars = self._provider.list_vars()
             else:
-                # Use hybrid provider for Azure
                 azure_env = self._config[self.current_project][env]
                 self._provider = HybridAzureProvider(azure_env)
-                # Show list immediately (fast)
                 self._all_vars = self._provider.list_vars()
-                # Fetch values in background
                 self._fetch_values_background()
         except KeyError as exc:
             self.notify(
@@ -258,22 +254,20 @@ class KvtApp(App):
         )
         self._get_table().load(vars)
 
-    def _apply_set(self, key: str, value: str) -> None:
-        """Write a variable to the provider and sync local state.
+    def _stage_set(self, key: str, value: str) -> None:
+        """Stage a set (add or edit) change in the local working copy.
 
-        On provider failure the undo stack and local cache are left unchanged
-        and an error notification is shown.
+        The provider is NOT written here.  Call _commit_staged() to flush.
         """
-        previous = self._provider.get(key)
-        try:
-            if previous is None:
-                self._provider.create(key, value)
-            else:
-                self._provider.update(key, value)
-        except AzureClientError as exc:
-            self.notify(f"Write failed: {exc}", severity="error", timeout=8)
-            return
-        self._all_vars = self._provider.list_vars()
+        previous = next((v.value for v in self._all_vars if v.key == key), None)
+        # Update working copy.
+        if previous is None:
+            self._all_vars.append(EnvVar(key=key, value=value))
+        else:
+            for v in self._all_vars:
+                if v.key == key:
+                    v.value = value
+                    break
         self._undo_stack.append(
             Action(kind=ActionKind.SET, key=key, value=value, previous_value=previous)
         )
@@ -281,24 +275,104 @@ class KvtApp(App):
         self._refresh_table()
         self._update_subtitle()
 
-    def _apply_delete(self, key: str) -> None:
-        """Delete a variable from the provider and sync local state.
+    def _stage_delete(self, key: str) -> None:
+        """Stage a delete in the local working copy.
 
-        On provider failure the undo stack and local cache are left unchanged
-        and an error notification is shown.
+        If an existing staged action already covers this key the operations are
+        collapsed to avoid redundant provider writes:
+
+        - Staged ADD (previous_value=None): simply cancel the add — net zero,
+          nothing to persist.
+        - Staged EDIT (previous_value=<str>): drop the edit, push a DELETE for
+          the original value so only the original is deleted at commit time.
+        - Staged RENAME (old_key → key): drop the rename, push a DELETE for
+          the original key/value so only the original is deleted.
+
+        The provider is NOT written here.  Call _commit_staged() to flush.
         """
-        previous = self._provider.get(key)
-        if previous is None:
+        existing = next((v for v in self._all_vars if v.key == key), None)
+        if existing is None:
             return
-        try:
-            self._provider.delete(key)
-        except AzureClientError as exc:
-            self.notify(f"Delete failed: {exc}", severity="error", timeout=8)
+
+        current_value = existing.value
+
+        # Check whether a prior staged action covers this key.
+        prior = next(
+            (a for a in reversed(self._undo_stack) if a.key == key),
+            None,
+        )
+
+        self._all_vars = [v for v in self._all_vars if v.key != key]
+
+        if prior is not None and prior.kind == ActionKind.SET and prior.previous_value is None:
+            # Was a staged add that never existed in the provider — cancel it out.
+            self._undo_stack.remove(prior)
+        elif (
+            prior is not None and prior.kind == ActionKind.SET and prior.previous_value is not None
+        ):
+            # Was a staged edit — replace with a delete of the original value.
+            original_value: str = prior.previous_value
+            self._undo_stack.remove(prior)
+            self._undo_stack.append(Action(kind=ActionKind.DELETE, key=key, value=original_value))
+        elif prior is not None and prior.kind == ActionKind.RENAME and prior.old_key is not None:
+            # Was a staged rename — replace with a delete of the original key/value.
+            self._undo_stack.remove(prior)
+            self._undo_stack.append(
+                Action(kind=ActionKind.DELETE, key=prior.old_key, value=prior.value)
+            )
+        else:
+            # No prior staged action — straightforward staged delete.
+            self._undo_stack.append(Action(kind=ActionKind.DELETE, key=key, value=current_value))
+
+        self.dirty = bool(self._undo_stack)
+        self._refresh_table()
+        self._update_subtitle()
+
+    def _stage_rename(self, old_key: str, new_key: str) -> None:
+        """Stage a rename in the local working copy.
+
+        The provider is NOT written here.  Call _commit_staged() to flush.
+        """
+        var = next((v for v in self._all_vars if v.key == old_key), None)
+        if var is None:
             return
-        self._all_vars = self._provider.list_vars()
-        self._undo_stack.append(Action(kind=ActionKind.DELETE, key=key, value=previous))
+        value = var.value
+        var.key = new_key
+        self._undo_stack.append(
+            Action(kind=ActionKind.RENAME, key=new_key, value=value, old_key=old_key)
+        )
         self.dirty = True
         self._refresh_table()
+        self._update_subtitle()
+
+    def _commit_staged(self) -> None:
+        """Flush all staged changes to the provider in order.
+
+        On any provider error the commit is aborted, an error is shown, and
+        the remaining staged changes are left intact so the user can retry.
+        """
+        committed: list[Action] = []
+        for action in self._undo_stack:
+            try:
+                if action.kind == ActionKind.SET:
+                    if action.previous_value is None:
+                        self._provider.create(action.key, action.value)
+                    else:
+                        self._provider.update(action.key, action.value)
+                elif action.kind == ActionKind.DELETE:
+                    self._provider.delete(action.key)
+                elif action.kind == ActionKind.RENAME and action.old_key is not None:
+                    self._provider.delete(action.old_key)
+                    self._provider.create(action.key, action.value)
+            except AzureClientError as exc:
+                self.notify(f"Save failed: {exc}", severity="error", timeout=8)
+                for done in committed:
+                    self._undo_stack.remove(done)
+                return
+            committed.append(action)
+
+        self._undo_stack.clear()
+        self.dirty = False
         self._update_subtitle()
 
     def _selected_key(self) -> str | None:
@@ -380,12 +454,7 @@ class KvtApp(App):
         )
 
     def action_jump_top(self) -> None:
-        """Implement vim-style gg: move to the first row on the second g press.
-
-        First g press arms the chord and starts a short timer. If a second g
-        arrives before the timer fires the cursor jumps to row 0. If the timer
-        fires first the flag is cleared and the lone g is silently consumed.
-        """
+        """Implement vim-style gg: move to the first row on the second g press."""
         if self._g_pressed:
             self._g_pressed = False
             self._get_table().move_cursor(row=0)
@@ -404,84 +473,72 @@ class KvtApp(App):
     def action_copy_value(self) -> None:
         """Copy the selected row's value to the system clipboard.
 
-        For multiline rows the raw blob is fetched from the provider and
-        copied verbatim (the badge in the table is not the real value).
+        For multiline (.env blob) rows the blob is decoded to a proper
+        .env file (literal ``\\n`` → real newlines) before copying.
         """
-        value = self._get_table().selected_value()
+        table = self._get_table()
+        is_multiline = table.selected_var_is_multiline()
+        value = table.selected_value()
         if value is None:
-            # Multiline row — copy the raw blob.
             key = self._selected_key()
             if key is None:
                 return
-            value = self._provider.get(key)
+            value = next((v.value for v in self._all_vars if v.key == key), None)
             if value is None:
                 return
+        if is_multiline:
+            value = value.replace("\\n", "\n")
         self.app.copy_to_clipboard(value)
-        self.notify("Copied value to clipboard", timeout=2)
+        msg = "Copied .env blob to clipboard" if is_multiline else "Copied value to clipboard"
+        self.notify(msg, timeout=2)
 
     def action_edit_var(self) -> None:
-        """Open the appropriate modal for the currently selected variable.
-
-        Multiline secrets open the editable drill-in view where inner vars
-        can be added/edited/deleted; single-line secrets open the standard
-        edit modal.
-        """
+        """Open the appropriate modal for the currently selected variable."""
         table = self._get_table()
         key = self._selected_key()
         if key is None:
             return
 
-        # Check if value is still loading
-        if isinstance(self._provider, HybridAzureProvider):
-            value = self._provider.get(key)
-            if value is None or value == "Loading...":
-                self.notify("Value is still loading, please wait", timeout=2)
-                return
+        if (
+            isinstance(self._provider, HybridAzureProvider)
+            and not self._is_staged_only(key)
+            and self._provider.get(key) == "Loading..."
+        ):
+            self.notify("Value is still loading, please wait", timeout=2)
+            return
 
         if table.selected_var_is_multiline():
-            blob = self._provider.get(key) or ""
+            var = next((v for v in self._all_vars if v.key == key), None)
+            blob = var.value if var else ""
 
             def on_blob_save(new_blob: str | None) -> None:
                 if new_blob is not None and new_blob != blob:
-                    self._apply_set(key, new_blob)
-                    self.notify(f"Updated {key}", timeout=2)
+                    self._stage_set(key, new_blob)
+                    self.notify(f"Staged update to {key}", timeout=2)
                 self._get_table().focus()
 
             self.push_screen(MultilineViewScreen(key, blob), on_blob_save)
             return
 
-        current = self._provider.get(key) or ""
+        var = next((v for v in self._all_vars if v.key == key), None)
+        current = var.value if var else ""
 
         def on_save(new_value: str | None) -> None:
             if new_value is not None and new_value != current:
-                self._apply_set(key, new_value)
-                self.notify(f"Updated {key}", timeout=2)
+                self._stage_set(key, new_value)
+                self.notify(f"Staged update to {key}", timeout=2)
             self._get_table().focus()
 
         self.push_screen(EditScreen(key=key, current_value=current), on_save)
 
-    def _apply_rename(self, old_key: str, new_key: str) -> None:
-        """Rename a variable atomically as a single undo entry."""
-        value = self._provider.get(old_key)
-        if value is None:
-            return
-        try:
-            self._provider.delete(old_key)
-            self._provider.create(new_key, value)
-        except AzureClientError as exc:
-            self.notify(f"Rename failed: {exc}", severity="error", timeout=8)
-            return
-        self._all_vars = self._provider.list_vars()
-        self._undo_stack.append(
-            Action(kind=ActionKind.RENAME, key=new_key, value=value, old_key=old_key)
-        )
-        self.dirty = True
-        self._refresh_table()
-        self._update_subtitle()
-
     def action_rename_var(self) -> None:
         """Open the rename modal to rename the selected variable's key."""
-        if isinstance(self._provider, HybridAzureProvider) and not self._provider._values_loaded:
+        key_check = self._selected_key()
+        if (
+            isinstance(self._provider, HybridAzureProvider)
+            and not self._provider._values_loaded
+            and (key_check is None or not self._is_staged_only(key_check))
+        ):
             self.notify("Values are still loading, please wait", timeout=2)
             return
 
@@ -493,15 +550,14 @@ class KvtApp(App):
 
         def on_rename(new_key: str | None) -> None:
             if new_key is not None:
-                self._apply_rename(key, new_key)
-                self.notify(f"Renamed {key} to {new_key}", timeout=2)
+                self._stage_rename(key, new_key)
+                self.notify(f"Staged rename {key} → {new_key}", timeout=2)
             self._get_table().focus()
 
         self.push_screen(RenameScreen(current_key=key, existing_keys=existing), on_rename)
 
     def action_add_var(self) -> None:
         """Open the add modal to insert a new variable."""
-        # Check if values are still loading
         if isinstance(self._provider, HybridAzureProvider) and not self._provider._values_loaded:
             self.notify("Values are still loading, please wait", timeout=2)
             return
@@ -510,34 +566,41 @@ class KvtApp(App):
 
         def on_save(var: EnvVar | None) -> None:
             if var is not None:
-                self._apply_set(var.key, var.value)
-                self.notify(f"Added {var.key}", timeout=2)
+                self._stage_set(var.key, var.value)
+                self.notify(f"Staged add {var.key}", timeout=2)
             self._get_table().focus()
 
         self.push_screen(AddScreen(existing_keys=existing), on_save)
 
+    def _is_staged_only(self, key: str) -> bool:
+        """Return True if *key* exists only in the local stage (never in the provider).
+
+        A key is staged-only when the most recent staged action for it is a SET
+        with no previous value — meaning it was added locally and the provider
+        has never seen it.
+        """
+        prior = next((a for a in reversed(self._undo_stack) if a.key == key), None)
+        return prior is not None and prior.kind == ActionKind.SET and prior.previous_value is None
+
     def action_delete_var(self) -> None:
-        """Implement vim-style dd: delete the selected variable on second d press."""
+        """Implement vim-style dd: stage deletion of selected variable on second d."""
         if self._d_pressed:
             self._d_pressed = False
             key = self._selected_key()
             if key is None:
                 return
 
-            # Check if value is still loading
-            if isinstance(self._provider, HybridAzureProvider):
+            # Only check "still loading" for provider-backed vars.  A staged-only
+            # var was never in the provider so it can never be in a loading state.
+            if isinstance(self._provider, HybridAzureProvider) and not self._is_staged_only(key):
                 value = self._provider.get(key)
-                if value is None or value == "Loading...":
+                if value == "Loading...":
                     self.notify("Value is still loading, please wait", timeout=2)
                     return
 
-            def on_confirm(confirmed: bool | None) -> None:
-                if confirmed:
-                    self._apply_delete(key)
-                    self.notify(f"Deleted {key}", timeout=2)
-                self._get_table().focus()
-
-            self.push_screen(ConfirmScreen(f"Delete  {key}?"), on_confirm)
+            self._stage_delete(key)
+            self.notify(f"Staged delete {key}", timeout=2)
+            self._get_table().focus()
         else:
             self._d_pressed = True
             self.set_timer(0.5, self._reset_d)
@@ -545,8 +608,21 @@ class KvtApp(App):
     def _reset_d(self) -> None:
         self._d_pressed = False
 
+    def action_save_changes(self) -> None:
+        """Open SaveConfirmScreen to review and commit staged changes."""
+        if not self._undo_stack:
+            self.notify("No unsaved changes", timeout=2)
+            return
+
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._commit_staged()
+            self._get_table().focus()
+
+        self.push_screen(SaveConfirmScreen(list(self._undo_stack)), on_confirm)
+
     def action_undo(self) -> None:
-        """Reverse the most recent mutation."""
+        """Reverse the most recent staged mutation."""
         if not self._undo_stack:
             self.notify("Nothing to undo", timeout=2)
             return
@@ -555,18 +631,25 @@ class KvtApp(App):
 
         if action.kind == ActionKind.SET:
             if action.previous_value is None:
-                self._provider.delete(action.key)
+                # Was an add — remove from working copy.
+                self._all_vars = [v for v in self._all_vars if v.key != action.key]
             else:
-                self._provider.update(action.key, action.previous_value)
+                for v in self._all_vars:
+                    if v.key == action.key:
+                        v.value = action.previous_value
+                        break
         elif action.kind == ActionKind.DELETE:
-            self._provider.create(action.key, action.value)
-        elif action.kind == ActionKind.RENAME:
-            self._provider.delete(action.key)
-            self._provider.create(action.old_key, action.value)  # type: ignore[arg-type]
+            self._all_vars.append(EnvVar(key=action.key, value=action.value))
+        elif action.kind == ActionKind.RENAME and action.old_key is not None:
+            old_key: str = action.old_key
+            for v in self._all_vars:
+                if v.key == action.key:
+                    v.key = old_key
+                    break
 
-        self._all_vars = self._provider.list_vars()
         self.dirty = bool(self._undo_stack)
         self._refresh_table()
+        self._update_subtitle()
         self.notify(f"Undid change to {action.key}", timeout=2)
 
     def on_input_changed(self, event: Input.Changed) -> None:

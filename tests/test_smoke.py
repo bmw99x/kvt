@@ -3,7 +3,7 @@
 from typing import cast
 
 from rich.text import Text
-from textual.widgets import Button, Input
+from textual.widgets import Input
 
 from kvt.app import KvtApp
 from kvt.azure.client import AzureClientError
@@ -338,100 +338,59 @@ class TestAdd:
 
 
 class TestDelete:
-    async def test_dd_opens_confirm_screen(self):
+    async def test_dd_stages_delete_immediately(self):
         """
         Given the table is focused
         When the user presses d twice
-        Then the ConfirmScreen modal is pushed
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            await pilot.press("d")
-            await pilot.press("d")
-            assert isinstance(pilot.app.screen, ConfirmScreen)
-
-    async def test_confirm_delete_decreases_row_count(self):
-        """
-        Given the ConfirmScreen is shown
-        When the user confirms with y
-        Then the table has one fewer row
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = pilot.app
-            table = app.query_one("#env-table", EnvTable)
-
-            await pilot.press("d")
-            await pilot.press("d")
-            await pilot.press("y")
-            await pilot.pause()
-
-            assert table.row_count == DEFAULT_ROW_COUNT - 1
-
-    async def test_cancel_delete_leaves_row_count_unchanged(self):
-        """
-        Given the ConfirmScreen is shown
-        When the user cancels with n
-        Then the table row count is unchanged
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            app = pilot.app
-            table = app.query_one("#env-table", EnvTable)
-
-            await pilot.press("d")
-            await pilot.press("d")
-            await pilot.press("n")
-            await pilot.pause()
-
-            assert table.row_count == DEFAULT_ROW_COUNT
-
-    async def test_l_moves_focus_to_yes_button(self):
-        """
-        Given the ConfirmScreen is shown (No is focused by default)
-        When the user presses l
-        Then the Yes button receives focus
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            await pilot.press("d")
-            await pilot.press("d")
-            screen = pilot.app.screen
-            assert isinstance(screen, ConfirmScreen)
-            await pilot.press("l")
-            assert screen.focused is screen.query_one("#confirm-yes", Button)
-
-    async def test_h_moves_focus_to_no_button(self):
-        """
-        Given the ConfirmScreen is shown with Yes focused
-        When the user presses h
-        Then the No button receives focus
-        """
-        async with KvtApp().run_test(headless=True) as pilot:
-            await wait_loaded(pilot)
-            await pilot.press("d")
-            await pilot.press("d")
-            screen = pilot.app.screen
-            assert isinstance(screen, ConfirmScreen)
-            await pilot.press("l")  # focus Yes first
-            await pilot.press("h")  # back to No
-            assert screen.focused is screen.query_one("#confirm-no", Button)
-
-    async def test_enter_on_yes_confirms(self):
-        """
-        Given the ConfirmScreen is shown with Yes focused
-        When the user presses enter
-        Then the delete is confirmed
+        Then the row is removed immediately (no confirm modal)
         """
         async with KvtApp().run_test(headless=True) as pilot:
             await wait_loaded(pilot)
             table = pilot.app.query_one("#env-table", EnvTable)
             await pilot.press("d")
             await pilot.press("d")
-            await pilot.press("l")  # focus Yes
-            await pilot.press("enter")
             await pilot.pause()
             assert table.row_count == DEFAULT_ROW_COUNT - 1
+
+    async def test_dd_does_not_open_confirm_screen(self):
+        """
+        Given the table is focused
+        When the user presses d twice
+        Then no ConfirmScreen is pushed (deletion is immediate staging)
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.pause()
+            assert not isinstance(pilot.app.screen, ConfirmScreen)
+
+    async def test_single_d_does_not_delete(self):
+        """
+        Given the table is focused
+        When the user presses d only once
+        Then nothing is deleted (dd chord not completed)
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            await pilot.press("d")
+            await pilot.pause()
+            assert table.row_count == DEFAULT_ROW_COUNT
+
+    async def test_dd_marks_dirty(self):
+        """
+        Given the table is focused
+        When the user presses d twice
+        Then dirty is True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.pause()
+            assert app.dirty is True
 
 
 class TestUndo:
@@ -460,7 +419,7 @@ class TestUndo:
 
     async def test_undo_reverses_delete(self):
         """
-        Given a variable has been deleted
+        Given a variable has been deleted (staged)
         When the user presses u
         Then the variable is restored and row count returns to the original count
         """
@@ -471,7 +430,6 @@ class TestUndo:
 
             await pilot.press("d")
             await pilot.press("d")
-            await pilot.press("y")
             await pilot.pause()
             assert table.row_count == DEFAULT_ROW_COUNT - 1
 
@@ -881,7 +839,7 @@ class TestDirtyState:
     async def test_delete_produces_one_undo_entry(self):
         """
         Given a clean app
-        When the user deletes a variable and confirms
+        When the user presses dd to stage a delete
         Then the undo stack has exactly 1 entry and dirty is True
         """
         async with KvtApp().run_test(headless=True) as pilot:
@@ -890,7 +848,6 @@ class TestDirtyState:
 
             await pilot.press("d")
             await pilot.press("d")
-            await pilot.press("y")
             await pilot.pause()
 
             assert app.dirty is True
@@ -942,14 +899,23 @@ class TestDirtyState:
             await pilot.press("enter")
             await pilot.pause()
 
-            assert app._provider.get("APP_ENV_RENAMED") == original_value  # noqa: SLF001
-            assert app._provider.get(original_key) is None  # noqa: SLF001
+            # Provider not yet written — old key still present, new key absent
+            assert app._provider.get(original_key) == original_value  # noqa: SLF001
+            assert app._provider.get("APP_ENV_RENAMED") is None  # noqa: SLF001
+            # Working copy reflects the rename
+            by_key = {v.key: v for v in app._all_vars}  # noqa: SLF001
+            assert "APP_ENV_RENAMED" in by_key
+            assert original_key not in by_key
 
             await pilot.press("u")
             await pilot.pause()
 
+            # After undo, working copy is restored; provider still untouched
             assert app._provider.get(original_key) == original_value  # noqa: SLF001
             assert app._provider.get("APP_ENV_RENAMED") is None  # noqa: SLF001
+            by_key_after = {v.key: v for v in app._all_vars}  # noqa: SLF001
+            assert original_key in by_key_after
+            assert "APP_ENV_RENAMED" not in by_key_after
             assert app.dirty is False
 
     async def test_subtitle_after_rename_shows_one_change(self):
@@ -1100,7 +1066,6 @@ class TestDirtyState:
             await pilot.press("j")
             await pilot.press("d")
             await pilot.press("d")
-            await pilot.press("y")
             await pilot.pause()
 
             assert len(app._undo_stack) == 3  # noqa: SLF001
@@ -1150,12 +1115,14 @@ class TestErrorHandling:
             app = cast(KvtApp, pilot.app)
             assert app.query_one("#env-table", EnvTable).row_count == 0
 
-    async def test_write_failure_does_not_push_undo(self):
+    async def test_write_failure_at_commit_leaves_stage_intact(self):
         """
         GIVEN a provider that raises AzureClientError on create/update
-        WHEN the user adds a variable and saves
-        THEN the undo stack is unchanged and dirty remains False
+        WHEN the user stages an add and confirms the save
+        THEN dirty remains True and the stage is intact (commit failed)
         """
+        from kvt.screens.save_confirm import SaveConfirmScreen
+
         provider = _FailingProvider()
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
             await wait_loaded(pilot)
@@ -1170,15 +1137,29 @@ class TestErrorHandling:
             await pilot.press("enter")
             await pilot.pause()
 
-            assert not app.dirty
-            assert len(app._undo_stack) == 0  # noqa: SLF001
+            # Stage is dirty before attempting save
+            assert app.dirty
+            assert len(app._undo_stack) == 1  # noqa: SLF001
 
-    async def test_delete_failure_does_not_push_undo(self):
+            # Attempt save — provider will raise
+            await pilot.press("s")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, SaveConfirmScreen)
+            await pilot.press("y")
+            await pilot.pause()
+
+            # Commit failed — stage still intact
+            assert app.dirty
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+    async def test_delete_failure_at_commit_leaves_stage_intact(self):
         """
         GIVEN a provider that raises AzureClientError on delete
-        WHEN the user deletes a variable and confirms
-        THEN the undo stack is unchanged and dirty remains False
+        WHEN the user stages a delete and confirms the save
+        THEN dirty remains True and the stage is intact (commit failed)
         """
+        from kvt.screens.save_confirm import SaveConfirmScreen
+
         provider = _FailingProvider()
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
             await wait_loaded(pilot)
@@ -1186,8 +1167,16 @@ class TestErrorHandling:
 
             await pilot.press("d")
             await pilot.press("d")
+            await pilot.pause()
+
+            assert app.dirty
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+            await pilot.press("s")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, SaveConfirmScreen)
             await pilot.press("y")
             await pilot.pause()
 
-            assert not app.dirty
-            assert len(app._undo_stack) == 0  # noqa: SLF001
+            assert app.dirty
+            assert len(app._undo_stack) == 1  # noqa: SLF001

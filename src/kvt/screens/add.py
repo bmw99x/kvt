@@ -26,15 +26,18 @@ class AddScreen(ModalScreen[EnvVar | None]):
         Binding("escape", "cancel", show=False),
     ]
 
-    def __init__(self, existing_keys: set[str]) -> None:
+    def __init__(self, existing_keys: set[str], allow_multiline: bool = True) -> None:
         super().__init__()
         self._existing_keys = existing_keys
+        self._allow_multiline = allow_multiline
 
     def compose(self) -> ComposeResult:
         with Vertical(id="add-container"):
             yield Label("Add variable", id="add-title")
             yield Input(placeholder="KEY", id="add-key")
-            yield Checkbox("Multiline (.env blob)", id="add-multiline")
+            checkbox = Checkbox("Multiline (.env blob)", id="add-multiline")
+            checkbox.display = self._allow_multiline
+            yield checkbox
             yield Input(placeholder="value", id="add-value")
             yield Label("", id="add-error")
             yield Label("Tab · Enter to save · Escape to cancel", id="add-hint")

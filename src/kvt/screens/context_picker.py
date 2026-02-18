@@ -105,7 +105,7 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
                 self._index_map.append((project, env))
 
                 # Add option with appropriate label
-                label = f"  → {env}" if is_current else f"      {env}"
+                label = f"  *{env}*" if is_current else f"    {env}"
                 option_list.add_option(Option(label, id=f"{project}/{env}"))
 
         yield Label("  Switch context", id="picker-title")
