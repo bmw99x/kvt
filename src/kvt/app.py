@@ -432,6 +432,13 @@ class KvtApp(App):
         if key is None:
             return
 
+        # Check if value is still loading
+        if isinstance(self._provider, HybridAzureProvider):
+            value = self._provider.get(key)
+            if value is None or value == "Loading...":
+                self.notify("Value is still loading, please wait", timeout=2)
+                return
+
         if table.selected_var_is_multiline():
             blob = self._provider.get(key) or ""
 
@@ -456,6 +463,11 @@ class KvtApp(App):
 
     def action_add_var(self) -> None:
         """Open the add modal to insert a new variable."""
+        # Check if values are still loading
+        if isinstance(self._provider, HybridAzureProvider) and not self._provider._values_loaded:
+            self.notify("Values are still loading, please wait", timeout=2)
+            return
+            
         existing = {v.key for v in self._all_vars}
 
         def on_save(var: EnvVar | None) -> None:
@@ -473,6 +485,13 @@ class KvtApp(App):
             key = self._selected_key()
             if key is None:
                 return
+
+            # Check if value is still loading
+            if isinstance(self._provider, HybridAzureProvider):
+                value = self._provider.get(key)
+                if value is None or value == "Loading...":
+                    self.notify("Value is still loading, please wait", timeout=2)
+                    return
 
             def on_confirm(confirmed: bool | None) -> None:
                 if confirmed:

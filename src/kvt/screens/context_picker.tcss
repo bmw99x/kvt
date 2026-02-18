@@ -52,11 +52,13 @@ ContextPickerScreen {
 }
 
 .picker-env-item:focus-within {
-    background: $primary-darken-2;
+    background: $primary;
+    text-style: bold;
 }
 
 .picker-env-item--highlight {
-    background: $primary-darken-2;
+    background: $primary;
+    text-style: bold;
 }
 
 .picker-env {
@@ -66,6 +68,7 @@ ContextPickerScreen {
 
 .picker-env-active {
     background: $primary-darken-2;
+    text-style: bold;
 }
 
 .picker-env-active .picker-env {
