@@ -31,8 +31,7 @@ class HybridAzureProvider:
         """Return all secrets with values (or placeholders if not loaded)."""
         # For display, use placeholder if value not loaded yet
         display_data = {
-            name: value if value is not None else "Loading..."
-            for name, value in self._data.items()
+            name: value if value is not None else "Loading..." for name, value in self._data.items()
         }
         return classify_secrets(display_data)
 
@@ -48,18 +47,18 @@ class HybridAzureProvider:
 
     def fetch_all_values(self) -> dict[str, str]:
         """Fetch all secret values in parallel using thread pool.
-        
+
         Returns dict of name→value, also updates internal cache.
         """
         names_without_values = [name for name, value in self._data.items() if value is None]
         if not names_without_values:
             return {k: v for k, v in self._data.items() if v is not None}
-        
+
         values = self._client.fetch_values_batch(names_without_values)
         # Update internal cache
         for name, value in values.items():
             self._data[name] = value
-        
+
         self._values_loaded = all(v is not None for v in self._data.values())
         return values
 

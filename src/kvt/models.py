@@ -19,6 +19,7 @@ class EnvVar:
 class ActionKind(Enum):
     SET = auto()
     DELETE = auto()
+    RENAME = auto()
 
 
 @dataclass
@@ -30,9 +31,11 @@ class Action:
     - SET (add or edit): reverse by restoring previous_value (or deleting if
       there was no previous value, i.e. it was an add).
     - DELETE: reverse by re-inserting the deleted key/value.
+    - RENAME: reverse by renaming new_key back to key (old_key stores the original).
     """
 
     kind: ActionKind
     key: str
     value: str
     previous_value: str | None = None
+    old_key: str | None = None

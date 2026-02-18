@@ -35,6 +35,24 @@ class EnvTable(DataTable):
         Binding("k", "cursor_up", show=False),
     ]
 
+    def action_cursor_down(self) -> None:
+        """Move down one row, wrapping from the last row to the first."""
+        if self.row_count == 0:
+            return
+        if self.cursor_row == self.row_count - 1:
+            self.move_cursor(row=0)
+        else:
+            super().action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        """Move up one row, wrapping from the first row to the last."""
+        if self.row_count == 0:
+            return
+        if self.cursor_row == 0:
+            self.move_cursor(row=self.row_count - 1)
+        else:
+            super().action_cursor_up()
+
     def on_mount(self) -> None:
         self.cursor_type = "row"
         self.zebra_stripes = True

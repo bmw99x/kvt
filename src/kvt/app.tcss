@@ -61,7 +61,8 @@ ConfirmScreen {
 }
 
 #edit-container,
-#add-container {
+#add-container,
+#rename-container {
     width: 64;
     height: auto;
     padding: 2 3;
@@ -70,14 +71,16 @@ ConfirmScreen {
 }
 
 #edit-title,
-#add-title {
+#add-title,
+#rename-title {
     text-style: bold;
     margin-bottom: 1;
 }
 
 #edit-value,
 #add-key,
-#add-value {
+#add-value,
+#rename-key {
     margin-bottom: 1;
     border: tall $primary-darken-2;
     background: $surface-darken-1;
@@ -85,12 +88,14 @@ ConfirmScreen {
 
 #edit-value:focus,
 #add-key:focus,
-#add-value:focus {
+#add-value:focus,
+#rename-key:focus {
     border: tall $primary;
 }
 
 #edit-hint,
-#add-hint {
+#add-hint,
+#rename-hint {
     color: $text-muted;
 }
 

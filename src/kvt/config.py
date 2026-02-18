@@ -144,7 +144,7 @@ THEME_CONFIG_PATH = Path("~/.config/kvt/theme.json").expanduser()
 
 def load_theme() -> str | None:
     """Load the saved theme preference.
-    
+
     Returns the theme name if set, None otherwise.
     """
     if not THEME_CONFIG_PATH.exists():

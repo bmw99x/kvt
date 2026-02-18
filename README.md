@@ -84,14 +84,15 @@ kvt
 
 | Key           | Action                          |
 | ------------- | ------------------------------- |
-| `j` / `k`     | Move down / up                  |
+| `j` / `k`     | Move down / up (wraps around)   |
 | `g g`         | Jump to top                     |
 | `G`           | Jump to bottom                  |
 | `i` / `Enter` | Edit selected variable          |
+| `r`           | Rename selected variable        |
 | `o`           | Add new variable                |
 | `d d`         | Delete selected variable        |
-| `u`           | Undo last change                |
 | `y`           | Copy value to clipboard         |
+| `u`           | Undo last change                |
 | `/`           | Search / filter                 |
 | `Escape`      | Clear search                    |
 | `e` / `Tab`   | Cycle to next environment       |
@@ -104,6 +105,21 @@ Double-clicking a row also opens the edit modal.
 ### Multiline secrets
 
 Secrets whose values contain multiple `KEY=value` lines are shown as `[ env ]` badges. Editing them opens a drill-in table where each inner variable can be managed individually. Changes are written back as a single Azure secret.
+
+Available keybindings in multiline view:
+
+| Key           | Action                          |
+| ------------- | ------------------------------- |
+| `j` / `k`     | Move down / up (wraps around)   |
+| `g g`         | Jump to top                     |
+| `G`           | Jump to bottom                  |
+| `i`           | Edit variable value             |
+| `r`           | Rename variable key             |
+| `y`           | Copy value to clipboard         |
+| `o`           | Add new variable                |
+| `d d`         | Delete variable                 |
+| `s`           | Save changes                    |
+| `q` / `Esc`   | Cancel                          |
 
 ## Development
 

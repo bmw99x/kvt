@@ -1,11 +1,12 @@
 """Main application entry point."""
 
 import asyncio
+import contextlib
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
-from textual import work
 from textual.widgets import Footer, Header, Input, LoadingIndicator
 
 from kvt.azure.client import AzureClientError
@@ -13,7 +14,6 @@ from kvt.config import Config, ConfigError, load_config, load_theme, save_theme
 from kvt.constants import APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
-from kvt.providers_azure import AzureProvider
 from kvt.providers_azure_hybrid import HybridAzureProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
@@ -21,6 +21,7 @@ from kvt.screens.context_picker import ContextPickerScreen
 from kvt.screens.edit import EditScreen
 from kvt.screens.help import HelpScreen
 from kvt.screens.multiline_view import MultilineViewScreen
+from kvt.screens.rename import RenameScreen
 from kvt.widgets.env_table import EnvTable
 from kvt.widgets.env_tabs import EnvTabs
 from kvt.widgets.main_view import MainView
@@ -52,8 +53,9 @@ class KvtApp(App):
         Binding("y", "copy_value", "Copy"),
         Binding("i", "edit_var", "Edit"),
         Binding("enter", "edit_var", show=False),
+        Binding("r", "rename_var", "Rename"),
         Binding("o", "add_var", "Add"),
-        Binding("d", "delete_var", "Delete"),
+        Binding("d", "delete_var", "dd Delete"),
         Binding("u", "undo", "Undo"),
         Binding("p", "pick_context", "Project"),
         Binding("e", "cycle_env_next", "Env"),
@@ -68,10 +70,8 @@ class KvtApp(App):
         super().__init__()
         self._config: Config = {}
         if _use_config:
-            try:
+            with contextlib.suppress(ConfigError):
                 self._config = load_config()
-            except ConfigError:
-                pass
         if not _use_config or not self._config:
             self._projects: dict[str, list[str]] = PROJECTS
             default_project = DEFAULT_PROJECT
@@ -125,20 +125,20 @@ class KvtApp(App):
                 self._get_table().focus()
                 self._update_subtitle()
                 return
-            
+
             # For Azure provider, use hybrid loading
             azure_env = self._config[self.current_project][self.current_env]
             self._provider = HybridAzureProvider(azure_env)
-            
+
             # Show list immediately (fast operation - just names)
             self._all_vars = self._provider.list_vars()
             self._refresh_table()
             self._get_table().focus()
             self._update_subtitle()
-            
+
             # Fetch values in background
             self._fetch_values_background()
-            
+
         except (AzureClientError, KeyError) as exc:
             self.notify(f"Load failed: {exc}", severity="error", timeout=8)
             self._all_vars = []
@@ -149,14 +149,14 @@ class KvtApp(App):
         """Fetch all secret values in background thread."""
         if not isinstance(self._provider, HybridAzureProvider):
             return
-        
+
         try:
             self._provider.fetch_all_values()
             # Update UI on main thread
             self.call_from_thread(self._update_values)
-        except AzureClientError as exc:
+        except AzureClientError:
             self.call_from_thread(
-                lambda: self.notify(f"Failed to load values: {exc}", severity="error", timeout=8)
+                lambda: self.notify("Failed to load values", severity="error", timeout=8)
             )
 
     def _update_values(self) -> None:
@@ -442,7 +442,7 @@ class KvtApp(App):
             blob = self._provider.get(key) or ""
 
             def on_blob_save(new_blob: str | None) -> None:
-                if new_blob is not None:
+                if new_blob is not None and new_blob != blob:
                     self._apply_set(key, new_blob)
                     self.notify(f"Updated {key}", timeout=2)
                 self._get_table().focus()
@@ -460,13 +460,52 @@ class KvtApp(App):
 
         self.push_screen(EditScreen(key=key, current_value=current), on_save)
 
+    def _apply_rename(self, old_key: str, new_key: str) -> None:
+        """Rename a variable atomically as a single undo entry."""
+        value = self._provider.get(old_key)
+        if value is None:
+            return
+        try:
+            self._provider.delete(old_key)
+            self._provider.create(new_key, value)
+        except AzureClientError as exc:
+            self.notify(f"Rename failed: {exc}", severity="error", timeout=8)
+            return
+        self._all_vars = self._provider.list_vars()
+        self._undo_stack.append(
+            Action(kind=ActionKind.RENAME, key=new_key, value=value, old_key=old_key)
+        )
+        self.dirty = True
+        self._refresh_table()
+        self._update_subtitle()
+
+    def action_rename_var(self) -> None:
+        """Open the rename modal to rename the selected variable's key."""
+        if isinstance(self._provider, HybridAzureProvider) and not self._provider._values_loaded:
+            self.notify("Values are still loading, please wait", timeout=2)
+            return
+
+        key = self._selected_key()
+        if key is None:
+            return
+
+        existing = {v.key for v in self._all_vars}
+
+        def on_rename(new_key: str | None) -> None:
+            if new_key is not None:
+                self._apply_rename(key, new_key)
+                self.notify(f"Renamed {key} to {new_key}", timeout=2)
+            self._get_table().focus()
+
+        self.push_screen(RenameScreen(current_key=key, existing_keys=existing), on_rename)
+
     def action_add_var(self) -> None:
         """Open the add modal to insert a new variable."""
         # Check if values are still loading
         if isinstance(self._provider, HybridAzureProvider) and not self._provider._values_loaded:
             self.notify("Values are still loading, please wait", timeout=2)
             return
-            
+
         existing = {v.key for v in self._all_vars}
 
         def on_save(var: EnvVar | None) -> None:
@@ -521,6 +560,9 @@ class KvtApp(App):
                 self._provider.update(action.key, action.previous_value)
         elif action.kind == ActionKind.DELETE:
             self._provider.create(action.key, action.value)
+        elif action.kind == ActionKind.RENAME:
+            self._provider.delete(action.key)
+            self._provider.create(action.old_key, action.value)  # type: ignore[arg-type]
 
         self._all_vars = self._provider.list_vars()
         self.dirty = bool(self._undo_stack)

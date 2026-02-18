@@ -49,11 +49,11 @@ class AzureClient:
 
     def fetch_values_batch(self, names: list[str], max_workers: int = 10) -> dict[str, str]:
         """Fetch multiple secret values in parallel using thread pool.
-        
+
         Args:
             names: List of secret names to fetch
             max_workers: Maximum number of parallel threads
-            
+
         Returns:
             Dict mapping secret names to their values
         """
@@ -61,7 +61,7 @@ class AzureClient:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all fetch jobs
             future_to_name = {executor.submit(self._get_value, name): name for name in names}
-            
+
             # Collect results as they complete
             for future in as_completed(future_to_name):
                 name = future_to_name[future]
@@ -70,7 +70,7 @@ class AzureClient:
                 except Exception as exc:
                     # Log error but continue fetching other secrets
                     raise AzureClientError(f"Failed to fetch secret '{name}': {exc}") from exc
-        
+
         return values
 
     def get_secret(self, name: str) -> str:

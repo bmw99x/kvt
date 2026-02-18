@@ -2,9 +2,8 @@
 
 from typing import cast
 
-from textual.widgets import Button, Input, Label
-
 from rich.text import Text
+from textual.widgets import Button, Input
 
 from kvt.app import KvtApp
 from kvt.azure.client import AzureClientError
@@ -15,6 +14,7 @@ from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.edit import EditScreen
 from kvt.screens.multiline_view import MultilineViewScreen
+from kvt.screens.rename import RenameScreen
 from kvt.widgets.env_table import EnvTable
 
 # Row count for the default context (frontend / staging).
@@ -759,6 +759,382 @@ class TestDoubleClick:
             table.post_message(EnvTable.RowDoubleClicked())
             await pilot.pause()
             assert isinstance(app.screen, MultilineViewScreen)
+
+
+class TestWrapAround:
+    async def test_j_at_bottom_wraps_to_top(self):
+        """
+        Given the cursor is on the last row
+        When the user presses j
+        Then the cursor wraps to row 0
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            await pilot.press("G")
+            assert table.cursor_row == table.row_count - 1
+            await pilot.press("j")
+            assert table.cursor_row == 0
+
+    async def test_k_at_top_wraps_to_bottom(self):
+        """
+        Given the cursor is on the first row
+        When the user presses k
+        Then the cursor wraps to the last row
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            assert table.cursor_row == 0
+            await pilot.press("k")
+            assert table.cursor_row == table.row_count - 1
+
+    async def test_multiline_j_at_bottom_wraps_to_top(self):
+        """
+        Given the multiline view is open and cursor is on the last inner row
+        When the user presses j
+        Then the cursor wraps to row 0
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            # Navigate to the multiline row (last row in staging)
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            screen = pilot.app.screen
+            assert isinstance(screen, MultilineViewScreen)
+            ml_table = screen.query_one("#ml-table", EnvTable)
+            # Jump to last row
+            await pilot.press("G")
+            assert ml_table.cursor_row == ml_table.row_count - 1
+            # Wrap
+            await pilot.press("j")
+            assert ml_table.cursor_row == 0
+
+    async def test_multiline_k_at_top_wraps_to_bottom(self):
+        """
+        Given the multiline view is open and cursor is on the first inner row
+        When the user presses k
+        Then the cursor wraps to the last inner row
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            screen = pilot.app.screen
+            assert isinstance(screen, MultilineViewScreen)
+            ml_table = screen.query_one("#ml-table", EnvTable)
+            assert ml_table.cursor_row == 0
+            await pilot.press("k")
+            assert ml_table.cursor_row == ml_table.row_count - 1
+
+
+class TestDirtyState:
+    async def test_edit_produces_one_undo_entry(self):
+        """
+        Given a clean app
+        When the user edits a single-line value and saves
+        Then the undo stack has exactly 1 entry and dirty is True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            assert len(app._undo_stack) == 0  # noqa: SLF001
+
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "changed":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.dirty is True
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+    async def test_add_produces_one_undo_entry(self):
+        """
+        Given a clean app
+        When the user adds a new variable
+        Then the undo stack has exactly 1 entry and dirty is True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("o")
+            for ch in "NEW_KEY":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "newval":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.dirty is True
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+    async def test_delete_produces_one_undo_entry(self):
+        """
+        Given a clean app
+        When the user deletes a variable and confirms
+        Then the undo stack has exactly 1 entry and dirty is True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.press("y")
+            await pilot.pause()
+
+            assert app.dirty is True
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+    async def test_rename_produces_one_undo_entry(self):
+        """
+        Given a clean app
+        When the user renames a variable
+        Then the undo stack has exactly 1 entry (not 2) and dirty is True
+        """
+
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, RenameScreen)
+            # Clear existing key and type new name
+            await pilot.press("ctrl+u")
+            for ch in "APP_ENV_RENAMED":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.dirty is True
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+    async def test_rename_undo_restores_original_key(self):
+        """
+        Given a variable has been renamed
+        When the user presses u
+        Then the original key is restored and the new key is gone
+        """
+
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            original_key = "APP_ENV"
+            original_value = app._provider.get(original_key)  # noqa: SLF001
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, RenameScreen)
+            await pilot.press("ctrl+u")
+            for ch in "APP_ENV_RENAMED":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app._provider.get("APP_ENV_RENAMED") == original_value  # noqa: SLF001
+            assert app._provider.get(original_key) is None  # noqa: SLF001
+
+            await pilot.press("u")
+            await pilot.pause()
+
+            assert app._provider.get(original_key) == original_value  # noqa: SLF001
+            assert app._provider.get("APP_ENV_RENAMED") is None  # noqa: SLF001
+            assert app.dirty is False
+
+    async def test_subtitle_after_rename_shows_one_change(self):
+        """
+        Given a clean app
+        When the user renames a variable
+        Then the subtitle shows '1 unsaved change' not '2 unsaved changes'
+        """
+
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, RenameScreen)
+            await pilot.press("ctrl+u")
+            for ch in "APP_ENV_RENAMED":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert "1 unsaved change" in app.sub_title
+            assert "2 unsaved changes" not in app.sub_title
+
+    async def test_multiline_save_with_changes_produces_one_undo_entry(self):
+        """
+        Given the multiline view is open and the user edits an inner variable
+        When the user saves with s
+        Then the app undo stack has exactly 1 entry and dirty is True
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            # Open multiline view (ENV is the last row)
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, MultilineViewScreen)
+
+            # Edit first inner variable
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "newhost":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Save the multiline view
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.dirty is True
+            assert len(app._undo_stack) == 1  # noqa: SLF001
+
+    async def test_multiline_save_without_changes_leaves_dirty_false(self):
+        """
+        Given the multiline view is open and the user makes no changes
+        When the user presses s
+        Then the app undo stack is empty and dirty remains False
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, MultilineViewScreen)
+
+            # Save immediately without touching anything
+            await pilot.press("s")
+            await pilot.pause()
+
+            assert app.dirty is False
+            assert len(app._undo_stack) == 0  # noqa: SLF001
+
+    async def test_multiline_cancel_leaves_dirty_false(self):
+        """
+        Given the multiline view is open and the user edits an inner variable
+        When the user cancels (confirms discard)
+        Then the app undo stack is empty and dirty remains False
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, MultilineViewScreen)
+
+            # Make a change inside
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "discarded":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Cancel — triggers ConfirmScreen asking to discard
+            await pilot.press("escape")
+            await pilot.pause()
+            # Confirm discard
+            assert isinstance(pilot.app.screen, ConfirmScreen)
+            await pilot.press("y")
+            await pilot.pause()
+
+            assert app.dirty is False
+            assert len(app._undo_stack) == 0  # noqa: SLF001
+
+    async def test_multiple_operations_accumulate_undo_stack(self):
+        """
+        Given a clean app
+        When the user edits, adds, and deletes one variable each
+        Then the undo stack has exactly 3 entries
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            # Edit
+            await pilot.press("i")
+            await pilot.press("ctrl+a")
+            for ch in "changed":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Add
+            await pilot.press("o")
+            for ch in "EXTRA_KEY":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            for ch in "val":
+                await pilot.press(ch)
+            await pilot.press("enter")
+            await pilot.pause()
+
+            # Delete (second row — APP_ENV is now changed, delete API_BASE_URL)
+            await pilot.press("j")
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.press("y")
+            await pilot.pause()
+
+            assert len(app._undo_stack) == 3  # noqa: SLF001
+            assert "3 unsaved changes" in app.sub_title
+
+    async def test_undo_all_clears_dirty(self):
+        """
+        Given three mutations have been made
+        When the user undoes all three
+        Then dirty is False and the undo stack is empty
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            app = cast(KvtApp, pilot.app)
+
+            # Make 3 edits
+            for key_suffix in ["1", "2", "3"]:
+                await pilot.press("o")
+                for ch in f"EXTRA_{key_suffix}":
+                    await pilot.press(ch)
+                await pilot.press("enter")
+                for ch in "v":
+                    await pilot.press(ch)
+                await pilot.press("enter")
+                await pilot.pause()
+
+            assert len(app._undo_stack) == 3  # noqa: SLF001
+
+            for _ in range(3):
+                await pilot.press("u")
+                await pilot.pause()
+
+            assert app.dirty is False
+            assert len(app._undo_stack) == 0  # noqa: SLF001
 
 
 class TestErrorHandling:

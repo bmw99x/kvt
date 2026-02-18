@@ -33,7 +33,10 @@ MOCK_DATA: dict[str, dict[str, dict[str, str]]] = {
             "FEATURE_FLAGS": "payments,analytics,darkmode,beta-ui",
             "DEBUG": "true",
             # Multiline secret: a .env blob encoded as Azure would return it.
-            "ENV": "DB_HOST=db.staging.internal\\nDB_PORT=5432\\nDB_NAME=appdb_stg\\nDB_USER=app_user\\nDB_PASS=s3cr3t",
+            "ENV": (
+                "DB_HOST=db.staging.internal\\nDB_PORT=5432\\nDB_NAME=appdb_stg"
+                "\\nDB_USER=app_user\\nDB_PASS=s3cr3t"
+            ),
         },
         "development": {
             "APP_ENV": "development",

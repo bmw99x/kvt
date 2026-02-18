@@ -1,7 +1,7 @@
 """Multiline secret drill-in screen — editable .env blob view.
 
 Opens as a modal showing the inner key/value pairs parsed from a .env blob
-secret.  The user can add, edit, and delete inner variables.  On save the
+secret.  The user can add, edit, rename, and delete inner variables.  On save the
 inner vars are re-encoded as a blob and returned; on cancel the original
 blob is returned unchanged.
 """
@@ -16,13 +16,14 @@ from kvt.models import EnvVar
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.edit import EditScreen
+from kvt.screens.rename import RenameScreen
 from kvt.widgets.env_table import EnvTable
 
 
 class MultilineViewScreen(ModalScreen[str | None]):
     """Editable modal showing the inner variables of a multiline (.env blob) secret.
 
-    The user can add (o), edit (i), and delete (dd) inner variables.
+    The user can add (o), edit (i), rename (r), copy (y), and delete (dd) inner variables.
     Pressing s saves and re-encodes the blob; Esc/q discards changes.
     The result is the new blob string, or None if the user cancelled.
     """
@@ -33,7 +34,9 @@ class MultilineViewScreen(ModalScreen[str | None]):
         Binding("s", "save", "Save", show=True),
         Binding("o", "add_var", "Add", show=True),
         Binding("i", "edit_var", "Edit", show=True),
-        Binding("d", "delete_var", "Delete", show=True),
+        Binding("r", "rename_var", "Rename", show=True),
+        Binding("y", "copy_value", "Copy", show=True),
+        Binding("d", "delete_var", "dd Delete", show=True),
         Binding("j", "cursor_down", show=False),
         Binding("k", "cursor_up", show=False),
         Binding("g", "jump_top", show=False),
@@ -52,7 +55,10 @@ class MultilineViewScreen(ModalScreen[str | None]):
         yield Label(f"  {self._secret_name}", id="ml-title")
         yield EnvTable(id="ml-table")
         yield Label("", id="ml-status")
-        yield Label("  o add · i edit · dd delete · s save · q cancel", id="ml-hint")
+        yield Label(
+            "  o add · i edit · r rename · y copy · dd delete · s save · q cancel",
+            id="ml-hint",
+        )
 
     def on_mount(self) -> None:
         self._reload_table()
@@ -96,6 +102,9 @@ class MultilineViewScreen(ModalScreen[str | None]):
         self.app.push_screen(ConfirmScreen("Discard unsaved changes?"), on_confirm)
 
     def action_save(self) -> None:
+        if not self._dirty:
+            self.dismiss(None)
+            return
         self.dismiss(encode_dotenv_blob(self._vars))
 
     def action_cursor_down(self) -> None:
@@ -140,6 +149,36 @@ class MultilineViewScreen(ModalScreen[str | None]):
             self._table().focus()
 
         self.app.push_screen(EditScreen(key=key, current_value=var.value), on_save)
+
+    def action_rename_var(self) -> None:
+        key = self._selected_key()
+        if key is None:
+            return
+        var = next((v for v in self._vars if v.key == key), None)
+        if var is None:
+            return
+
+        existing = {v.key for v in self._vars}
+
+        def on_rename(new_key: str | None) -> None:
+            if new_key is not None:
+                var.key = new_key
+                self._mark_dirty()
+                self._reload_table()
+            self._table().focus()
+
+        self.app.push_screen(RenameScreen(current_key=key, existing_keys=existing), on_rename)
+
+    def action_copy_value(self) -> None:
+        key = self._selected_key()
+        if key is None:
+            return
+        var = next((v for v in self._vars if v.key == key), None)
+        if var is None:
+            return
+
+        self.app.copy_to_clipboard(var.value)
+        self.app.notify("Copied value to clipboard", timeout=2)
 
     def action_delete_var(self) -> None:
         if self._d_pressed:
