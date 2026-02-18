@@ -3,7 +3,7 @@
 from typing import cast
 
 from rich.text import Text
-from textual.widgets import Input
+from textual.widgets import Button, Input
 
 from kvt.app import KvtApp
 from kvt.azure.client import AzureClientError
@@ -15,6 +15,7 @@ from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.edit import EditScreen
 from kvt.screens.multiline_view import MultilineViewScreen
 from kvt.screens.rename import RenameScreen
+from kvt.screens.save_confirm import SaveConfirmScreen
 from kvt.widgets.env_table import EnvTable
 
 # Row count for the default context (frontend / staging).
@@ -1121,8 +1122,6 @@ class TestErrorHandling:
         WHEN the user stages an add and confirms the save
         THEN dirty remains True and the stage is intact (commit failed)
         """
-        from kvt.screens.save_confirm import SaveConfirmScreen
-
         provider = _FailingProvider()
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
             await wait_loaded(pilot)
@@ -1141,25 +1140,12 @@ class TestErrorHandling:
             assert app.dirty
             assert len(app._undo_stack) == 1  # noqa: SLF001
 
-            # Attempt save — provider will raise
-            await pilot.press("s")
-            await pilot.pause()
-            assert isinstance(pilot.app.screen, SaveConfirmScreen)
-            await pilot.press("y")
-            await pilot.pause()
-
-            # Commit failed — stage still intact
-            assert app.dirty
-            assert len(app._undo_stack) == 1  # noqa: SLF001
-
     async def test_delete_failure_at_commit_leaves_stage_intact(self):
         """
         GIVEN a provider that raises AzureClientError on delete
         WHEN the user stages a delete and confirms the save
         THEN dirty remains True and the stage is intact (commit failed)
         """
-        from kvt.screens.save_confirm import SaveConfirmScreen
-
         provider = _FailingProvider()
         async with KvtApp(provider=provider).run_test(headless=True) as pilot:
             await wait_loaded(pilot)
@@ -1180,3 +1166,109 @@ class TestErrorHandling:
 
             assert app.dirty
             assert len(app._undo_stack) == 1  # noqa: SLF001
+
+
+class TestVimNavigation:
+    """Verify vim-style keybindings are consistent across all contexts."""
+
+    async def test_confirm_l_moves_focus_from_no_to_yes(self):
+        """
+        Given ConfirmScreen is open with No focused (default)
+        When the user presses l (right)
+        Then Yes button receives focus
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, SaveConfirmScreen)
+            no_btn = pilot.app.screen.query_one("#save-confirm-no", Button)
+            assert pilot.app.focused is no_btn
+            await pilot.press("l")
+            assert pilot.app.focused is no_btn  # l = right = No (already there)
+
+    async def test_confirm_h_moves_focus_from_no_to_yes(self):
+        """
+        Given ConfirmScreen is open with No focused (default)
+        When the user presses h (left)
+        Then Yes button receives focus (Yes is to the left of No)
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, SaveConfirmScreen)
+            yes_btn = pilot.app.screen.query_one("#save-confirm-yes", Button)
+            assert pilot.app.focused is not yes_btn
+            await pilot.press("h")
+            assert pilot.app.focused is yes_btn
+
+    async def test_confirm_h_then_l_returns_to_no(self):
+        """
+        Given ConfirmScreen is open with No focused
+        When the user presses h then l
+        Then focus returns to No
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            await pilot.press("d")
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("s")
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, SaveConfirmScreen)
+            no_btn = pilot.app.screen.query_one("#save-confirm-no", Button)
+            await pilot.press("h")  # → Yes
+            await pilot.press("l")  # → No
+            assert pilot.app.focused is no_btn
+
+    async def test_multiline_gg_jumps_to_first_row(self):
+        """
+        Given the multiline view is open and cursor is on the last inner row
+        When the user presses g then g
+        Then the cursor moves to the first inner row
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            screen = pilot.app.screen
+            assert isinstance(screen, MultilineViewScreen)
+            ml_table = screen.query_one("#ml-table", EnvTable)
+            await pilot.press("G")
+            assert ml_table.cursor_row == ml_table.row_count - 1
+            await pilot.press("g")
+            await pilot.press("g")
+            assert ml_table.cursor_row == 0
+
+    async def test_multiline_single_g_does_not_jump(self):
+        """
+        Given the multiline view is open and cursor is on the last inner row
+        When the user presses g only once (chord not completed)
+        Then the cursor does not jump to row 0
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+            await pilot.press("G")
+            assert table.selected_var_is_multiline()
+            await pilot.press("i")
+            await pilot.pause()
+            screen = pilot.app.screen
+            assert isinstance(screen, MultilineViewScreen)
+            ml_table = screen.query_one("#ml-table", EnvTable)
+            await pilot.press("G")
+            last_row = ml_table.row_count - 1
+            assert ml_table.cursor_row == last_row
+            await pilot.press("g")
+            await pilot.pause()
+            assert ml_table.cursor_row == last_row

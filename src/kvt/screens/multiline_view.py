@@ -49,6 +49,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
         self._original_blob = blob
         self._vars: list[EnvVar] = parse_dotenv_blob(blob)
         self._d_pressed = False
+        self._g_pressed = False
         self._dirty = False
 
     def compose(self) -> ComposeResult:
@@ -114,7 +115,16 @@ class MultilineViewScreen(ModalScreen[str | None]):
         self._table().action_cursor_up()
 
     def action_jump_top(self) -> None:
-        self._table().move_cursor(row=0)
+        """Implement vim-style gg: move to the first row on the second g press."""
+        if self._g_pressed:
+            self._g_pressed = False
+            self._table().move_cursor(row=0)
+        else:
+            self._g_pressed = True
+            self.set_timer(0.5, self._reset_g)
+
+    def _reset_g(self) -> None:
+        self._g_pressed = False
 
     def action_jump_bottom(self) -> None:
         table = self._table()

@@ -18,10 +18,10 @@ class ConfirmScreen(ModalScreen[bool]):
         Binding("y", "confirm", show=False),
         Binding("n", "cancel", show=False),
         Binding("q", "cancel", show=False),
-        Binding("h", "focus_no", show=False),
-        Binding("left", "focus_no", show=False),
-        Binding("l", "focus_yes", show=False),
-        Binding("right", "focus_yes", show=False),
+        Binding("h", "focus_yes", show=False),
+        Binding("left", "focus_yes", show=False),
+        Binding("l", "focus_no", show=False),
+        Binding("right", "focus_no", show=False),
     ]
 
     def __init__(self, message: str) -> None:
