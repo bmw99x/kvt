@@ -56,7 +56,11 @@ class MultilineViewScreen(ModalScreen[str | None]):
 
     def on_mount(self) -> None:
         self._reload_table()
-        self.query_one("#ml-table", EnvTable).focus()
+        table = self.query_one("#ml-table", EnvTable)
+        table.focus()
+        # Focus first row if available
+        if table.row_count > 0:
+            table.cursor_coordinate = (0, 0)
 
     def _reload_table(self) -> None:
         table = self.query_one("#ml-table", EnvTable)
@@ -153,3 +157,7 @@ class MultilineViewScreen(ModalScreen[str | None]):
 
     def _reset_d(self) -> None:
         self._d_pressed = False
+
+    def on_env_table_row_double_clicked(self, event: EnvTable.RowDoubleClicked) -> None:
+        """Handle double-click on a row to open edit modal."""
+        self.action_edit_var()
