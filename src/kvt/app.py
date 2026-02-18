@@ -9,11 +9,12 @@ from textual import work
 from textual.widgets import Footer, Header, Input, LoadingIndicator
 
 from kvt.azure.client import AzureClientError
-from kvt.config import Config, ConfigError, load_config
+from kvt.config import Config, ConfigError, load_config, load_theme, save_theme
 from kvt.constants import APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
 from kvt.providers_azure import AzureProvider
+from kvt.providers_azure_hybrid import HybridAzureProvider
 from kvt.screens.add import AddScreen
 from kvt.screens.confirm import ConfirmScreen
 from kvt.screens.context_picker import ContextPickerScreen
@@ -108,23 +109,61 @@ class KvtApp(App):
         self.current_env = self._default_env
         self.query_one("#search", Input).display = False
         self.query_one("#loading", LoadingIndicator).display = False
+        # Load and apply saved theme
+        saved_theme = load_theme()
+        if saved_theme:
+            self.theme = saved_theme
         self._load_initial()
 
     @work
     async def _load_initial(self) -> None:
-        """Fetch secrets on startup; surface provider errors as a toast."""
-        self.loading = True
-        await asyncio.sleep(0.3)
+        """Fetch secrets on startup using hybrid loading."""
         try:
+            # For mock provider, just load everything
+            if self._using_mock or self._provider_injected:
+                self._all_vars = self._provider.list_vars()
+                self._refresh_table()
+                self._get_table().focus()
+                self._update_subtitle()
+                return
+            
+            # For Azure provider, use hybrid loading
+            azure_env = self._config[self.current_project][self.current_env]
+            self._provider = HybridAzureProvider(azure_env)
+            
+            # Show list immediately (fast operation - just names)
             self._all_vars = self._provider.list_vars()
-        except AzureClientError as exc:
-            self.loading = False
+            self._refresh_table()
+            self._get_table().focus()
+            self._update_subtitle()
+            
+            # Fetch values in background
+            self._fetch_values_background()
+            
+        except (AzureClientError, KeyError) as exc:
             self.notify(f"Load failed: {exc}", severity="error", timeout=8)
+            self._all_vars = []
+            self._refresh_table()
+
+    @work(thread=True)
+    def _fetch_values_background(self) -> None:
+        """Fetch all secret values in background thread."""
+        if not isinstance(self._provider, HybridAzureProvider):
             return
-        self.loading = False
+        
+        try:
+            self._provider.fetch_all_values()
+            # Update UI on main thread
+            self.call_from_thread(self._update_values)
+        except AzureClientError as exc:
+            self.call_from_thread(
+                lambda: self.notify(f"Failed to load values: {exc}", severity="error", timeout=8)
+            )
+
+    def _update_values(self) -> None:
+        """Update table after values are loaded (called from main thread)."""
+        self._all_vars = self._provider.list_vars()
         self._refresh_table()
-        self._get_table().focus()
-        self._update_subtitle()
 
     def _update_subtitle(self) -> None:
         backend = "mock" if self._using_mock else "Azure Key Vault"
@@ -147,6 +186,10 @@ class KvtApp(App):
         indicator.display = loading
         self.query_one("#env-table", EnvTable).display = not loading
 
+    def watch_theme(self, theme: str) -> None:
+        """Persist theme changes whenever the theme is changed."""
+        save_theme(theme)
+
     def watch_current_env(self, env: str) -> None:
         """Reload provider data whenever the active environment changes."""
         if not env or not self.current_project:
@@ -156,16 +199,22 @@ class KvtApp(App):
                 pass  # keep the injected provider as-is; _load_initial handles the first load
             elif self._using_mock:
                 self._provider = MockProvider(self.current_project, env)
+                self._all_vars = self._provider.list_vars()
             else:
+                # Use hybrid provider for Azure
                 azure_env = self._config[self.current_project][env]
-                self._provider = AzureProvider(azure_env)
-            self._all_vars = self._provider.list_vars()
+                self._provider = HybridAzureProvider(azure_env)
+                # Show list immediately (fast)
+                self._all_vars = self._provider.list_vars()
+                # Fetch values in background
+                self._fetch_values_background()
         except KeyError as exc:
             self.notify(
                 f"Config missing {self.current_project}/{env}: {exc}",
                 severity="error",
                 timeout=8,
             )
+            self._all_vars = []
         except AzureClientError as exc:
             self.notify(f"Load failed: {exc}", severity="error", timeout=8)
             self._all_vars = []

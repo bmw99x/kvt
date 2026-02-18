@@ -10,6 +10,7 @@ Raises ``AzureClientError`` on any non-zero exit code.
 import json
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
@@ -35,8 +36,42 @@ class AzureClient:
         Fetches the list of secret names first, then fetches each value
         individually (the list API does not return values).
         """
-        names = self._list_names()
+        names = self.list_secret_names()
         return {name: self._get_value(name) for name in names}
+
+    def list_secret_names(self) -> list[str]:
+        """Return list of all enabled secret names (fast operation)."""
+        return self._list_names()
+
+    def get_secret_value(self, name: str) -> str:
+        """Return the current value of a single secret."""
+        return self._get_value(name)
+
+    def fetch_values_batch(self, names: list[str], max_workers: int = 10) -> dict[str, str]:
+        """Fetch multiple secret values in parallel using thread pool.
+        
+        Args:
+            names: List of secret names to fetch
+            max_workers: Maximum number of parallel threads
+            
+        Returns:
+            Dict mapping secret names to their values
+        """
+        values = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fetch jobs
+            future_to_name = {executor.submit(self._get_value, name): name for name in names}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    values[name] = future.result()
+                except Exception as exc:
+                    # Log error but continue fetching other secrets
+                    raise AzureClientError(f"Failed to fetch secret '{name}': {exc}") from exc
+        
+        return values
 
     def get_secret(self, name: str) -> str:
         """Return the current value of a single secret."""

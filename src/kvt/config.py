@@ -136,3 +136,27 @@ def _bootstrap() -> None:
     CONFIG_PATH.write_text("{}\n")
     if not _README_PATH.exists():
         _README_PATH.write_text(_README_CONTENT)
+
+
+# Theme persistence
+THEME_CONFIG_PATH = Path("~/.config/kvt/theme.json").expanduser()
+
+
+def load_theme() -> str | None:
+    """Load the saved theme preference.
+    
+    Returns the theme name if set, None otherwise.
+    """
+    if not THEME_CONFIG_PATH.exists():
+        return None
+    try:
+        data = json.loads(THEME_CONFIG_PATH.read_text())
+        return data.get("theme")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def save_theme(theme: str) -> None:
+    """Save the theme preference to disk."""
+    THEME_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    THEME_CONFIG_PATH.write_text(json.dumps({"theme": theme}, indent=2))
