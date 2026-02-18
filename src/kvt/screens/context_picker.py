@@ -20,6 +20,8 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
     BINDINGS = [
         Binding("escape", "cancel", show=False),
         Binding("q", "cancel", show=False),
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -92,36 +94,31 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
 
     def compose(self) -> ComposeResult:
         option_list = OptionList(id="picker-list")
-        
+
         for project, envs in self._projects.items():
             # Add project as separator
-            option_list.add_option(Option(f"  {project}", disabled=True))
-            
+            option_list.add_option(None)
             for env in envs:
                 is_current = project == self._current_project and env == self._current_env
                 self._index_map.append((project, env))
-                
+
                 # Add option with appropriate label
                 label = f"  → {env}" if is_current else f"      {env}"
                 option_list.add_option(Option(label, id=f"{project}/{env}"))
-        
+
         yield Label("  Switch context", id="picker-title")
         yield option_list
         yield Label("  Enter to select · Esc/q to cancel", id="picker-hint")
 
     def on_mount(self) -> None:
         option_list = self.query_one("#picker-list", OptionList)
-        
+
         # Find and highlight current environment
         for idx, (project, env) in enumerate(self._index_map):
             if project == self._current_project and env == self._current_env:
                 option_list.highlighted = idx
                 break
-        
-        # Add j/k key bindings directly to OptionList
-        option_list.bind("j", "cursor_down", show=False)
-        option_list.bind("k", "cursor_up", show=False)
-        
+
         option_list.focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -130,6 +127,12 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
         if 0 <= option_index < len(self._index_map):
             pair = self._index_map[option_index]
             self.dismiss(pair)
+
+    # def action_cursor_down(self) -> None:
+    #     self.query_one("#picker-list", OptionList).action_cursor_down()
+    #
+    # def action_cursor_up(self) -> None:
+    #     self.query_one("#picker-list", OptionList).action_cursor_up()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
