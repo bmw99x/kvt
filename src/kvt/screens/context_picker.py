@@ -75,6 +75,7 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
         target_list_index = self._selectable_to_list_index(self._current_project, self._current_env)
         if target_list_index is not None:
             list_view.index = target_list_index
+        list_view.focus()
 
     def _selectable_to_list_index(self, project: str, env: str) -> int | None:
         """Return the ListView index (including non-selectable headers) for a given pair."""
