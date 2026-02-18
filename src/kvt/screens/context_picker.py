@@ -89,44 +89,50 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
         self._current_project = current_project
         self._current_env = current_env
         self._projects = projects if projects is not None else PROJECTS
-        # Map option index → (project, env)
-        self._index_map: list[tuple[str, str]] = []
+        # Map option index → (project, env), including disabled items
+        self._index_map: list[tuple[str, str] | None] = []
 
     def compose(self) -> ComposeResult:
         option_list = OptionList(id="picker-list")
-
+        
         for project, envs in self._projects.items():
-            # Add project as separator
-            option_list.add_option(None)
+            # Add project as separator (disabled, not in index map)
+            option_list.add_option(Option(f"  {project}", disabled=True))
+            self._index_map.append(None)  # Placeholder for disabled item
+            
             for env in envs:
                 is_current = project == self._current_project and env == self._current_env
                 self._index_map.append((project, env))
-
+                
                 # Add option with appropriate label
                 label = f"  → {env}" if is_current else f"      {env}"
                 option_list.add_option(Option(label, id=f"{project}/{env}"))
-
+        
         yield Label("  Switch context", id="picker-title")
         yield option_list
         yield Label("  Enter to select · Esc/q to cancel", id="picker-hint")
 
     def on_mount(self) -> None:
         option_list = self.query_one("#picker-list", OptionList)
-
+        
         # Find and highlight current environment
-        for idx, (project, env) in enumerate(self._index_map):
-            if project == self._current_project and env == self._current_env:
-                option_list.highlighted = idx
-                break
-
+        for idx, item in enumerate(self._index_map):
+            if item is not None:
+                project, env = item
+                if project == self._current_project and env == self._current_env:
+                    option_list.highlighted = idx
+                    break
+        
         option_list.focus()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle option selection."""
         option_index = event.option_index
         if 0 <= option_index < len(self._index_map):
-            pair = self._index_map[option_index]
-            self.dismiss(pair)
+            item = self._index_map[option_index]
+            if item is not None:
+                project, env = item
+                self.dismiss((project, env))
 
     # def action_cursor_down(self) -> None:
     #     self.query_one("#picker-list", OptionList).action_cursor_down()
