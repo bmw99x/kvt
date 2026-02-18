@@ -134,11 +134,11 @@ class ContextPickerScreen(ModalScreen[tuple[str, str] | None]):
                 project, env = item
                 self.dismiss((project, env))
 
-    # def action_cursor_down(self) -> None:
-    #     self.query_one("#picker-list", OptionList).action_cursor_down()
-    #
-    # def action_cursor_up(self) -> None:
-    #     self.query_one("#picker-list", OptionList).action_cursor_up()
+    def action_cursor_down(self) -> None:
+        self.query_one("#picker-list", OptionList).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#picker-list", OptionList).action_cursor_up()
 
     def action_cancel(self) -> None:
         self.dismiss(None)
