@@ -10,12 +10,14 @@ This tool is experimental and provided as-is. The author is not responsible for 
 
 ## Features
 
-- Browse, add, edit, and delete secrets across projects and environments
-- Multiline secrets (`.env` blobs) displayed and edited as structured key/value tables
-- Undo stack for all mutations within a session
+- Browse, add, edit, rename, and delete secrets across projects and environments
+- **Staged changes** — all mutations are held locally until you explicitly save; nothing touches Azure until you confirm
+- **Save confirm screen** — pressing `s` shows a coloured diff (added/removed/renamed/edited) before any write
+- Multiline secrets (`.env` blobs) displayed and edited as structured key/value tables; inner variables cannot themselves be multiline
+- Undo stack for all staged mutations within a session
 - Context switcher to jump between projects and environments
 - Search/filter across keys and values
-- Clipboard copy for any secret value
+- Clipboard copy for any secret value; multiline secrets are copied as a properly formatted `.env` file (real newlines)
 
 ## Requirements
 
@@ -82,29 +84,45 @@ kvt
 
 ### Keybindings
 
-| Key           | Action                          |
-| ------------- | ------------------------------- |
-| `j` / `k`     | Move down / up (wraps around)   |
-| `g g`         | Jump to top                     |
-| `G`           | Jump to bottom                  |
-| `i` / `Enter` | Edit selected variable          |
-| `r`           | Rename selected variable        |
-| `o`           | Add new variable                |
-| `d d`         | Delete selected variable        |
-| `y`           | Copy value to clipboard         |
-| `u`           | Undo last change                |
-| `/`           | Search / filter                 |
-| `Escape`      | Clear search                    |
-| `e` / `Tab`   | Cycle to next environment       |
-| `p`           | Open project/environment picker |
-| `?`           | Toggle help                     |
-| `q`           | Quit                            |
+| Key           | Action                                      |
+| ------------- | ------------------------------------------- |
+| `j` / `k`     | Move down / up (wraps around)               |
+| `g g`         | Jump to top                                 |
+| `G`           | Jump to bottom                              |
+| `i` / `Enter` | Edit selected variable                      |
+| `r`           | Rename selected variable                    |
+| `o`           | Add new variable                            |
+| `d d`         | Stage deletion of selected variable         |
+| `y`           | Copy value to clipboard                     |
+| `u`           | Undo last staged change                     |
+| `s`           | Review and save all staged changes          |
+| `/`           | Search / filter                             |
+| `Escape`      | Clear search                                |
+| `e` / `Tab`   | Cycle to next environment                   |
+| `p`           | Open project/environment picker             |
+| `?`           | Toggle help                                 |
+| `q`           | Quit                                        |
 
 Double-clicking a row also opens the edit modal.
 
+### Staged changes
+
+Edits, additions, renames, and deletions are all held in a local stage — nothing is written to Azure until you press `s`. The save screen shows a colour-coded diff of every pending change:
+
+- **Green** — new variable added
+- **Red** — variable deleted
+- **Yellow** — variable renamed
+- **Blue** — variable value edited
+
+Press `y` to commit all staged changes to Azure, or `n` / `Esc` to go back and keep editing. If any write fails the remaining staged changes are left intact so you can retry.
+
+Pressing `u` reverses the most recent staged change without touching Azure.
+
 ### Multiline secrets
 
-Secrets whose values contain multiple `KEY=value` lines are shown as `[ env ]` badges. Editing them opens a drill-in table where each inner variable can be managed individually. Changes are written back as a single Azure secret.
+Secrets whose values contain multiple `KEY=value` lines are shown as `[ env ]` badges. Pressing `i` or `Enter` on such a row opens a drill-in table where each inner variable can be managed individually. Changes are staged and written back as a single Azure secret when you save from the main view.
+
+Pressing `y` on a multiline row copies the full `.env` content to the clipboard with proper newlines.
 
 Available keybindings in multiline view:
 
@@ -118,8 +136,8 @@ Available keybindings in multiline view:
 | `y`           | Copy value to clipboard         |
 | `o`           | Add new variable                |
 | `d d`         | Delete variable                 |
-| `s`           | Save changes                    |
-| `q` / `Esc`   | Cancel                          |
+| `s`           | Save and return                 |
+| `q` / `Esc`   | Discard and return              |
 
 ## Development
 
