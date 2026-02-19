@@ -3,7 +3,7 @@
 from typing import cast
 
 from rich.text import Text
-from textual.widgets import Button, Input
+from textual.widgets import Button, Checkbox, Input, Label, TextArea
 
 from kvt.app import KvtApp
 from kvt.azure.client import AzureClientError
@@ -336,6 +336,147 @@ class TestAdd:
             await pilot.pause()
 
             assert table.row_count == DEFAULT_ROW_COUNT
+
+    async def test_multiline_textarea_saves_blob_on_ctrl_w(self):
+        """
+        Given the AddScreen is open with the multiline checkbox ticked
+        And the user types multi-line content into the TextArea
+        When the user presses ctrl+w
+        Then the screen closes and the table gains one multiline row
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            await pilot.press("o")
+            assert isinstance(pilot.app.screen, AddScreen)
+            for ch in "MY_ENV":
+                await pilot.press(ch)
+            screen = pilot.app.screen
+            assert isinstance(screen, AddScreen)
+            screen.query_one("#add-multiline", Checkbox).toggle()
+            await pilot.pause()
+            textarea = screen.query_one("#add-blob", TextArea)
+            textarea.insert("DB_HOST=db.local\nDB_PORT=5432\n")
+            await pilot.press("ctrl+w")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, AddScreen)
+            assert table.row_count == DEFAULT_ROW_COUNT + 1
+            last_row_key = table.get_cell_at(
+                table.cursor_coordinate._replace(row=table.row_count - 1, column=1)
+            )
+            assert last_row_key == "MY_ENV"
+            last_row_value = table.get_cell_at(
+                table.cursor_coordinate._replace(row=table.row_count - 1, column=2)
+            )
+            assert isinstance(last_row_value, Text)
+
+    async def test_multiline_textarea_saves_blob_via_save_button(self):
+        """
+        Given the AddScreen is open with the multiline checkbox ticked
+        And the user has typed content into the TextArea
+        When the user tabs to the Save button and presses Enter
+        Then the screen closes and the table gains one multiline row
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            await pilot.press("o")
+            assert isinstance(pilot.app.screen, AddScreen)
+            for ch in "MY_ENV":
+                await pilot.press(ch)
+            screen = pilot.app.screen
+            assert isinstance(screen, AddScreen)
+            screen.query_one("#add-multiline", Checkbox).toggle()
+            await pilot.pause()
+            textarea = screen.query_one("#add-blob", TextArea)
+            textarea.insert("DB_HOST=db.local\nDB_PORT=5432\n")
+            screen.query_one("#add-save", Button).press()
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, AddScreen)
+            assert table.row_count == DEFAULT_ROW_COUNT + 1
+
+    async def test_multiline_textarea_empty_saves_stub(self):
+        """
+        Given the AddScreen is open with the multiline checkbox ticked
+        And the TextArea is left empty
+        When the user presses ctrl+w
+        Then the screen closes with a placeholder blob and the row shows the badge
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            await pilot.press("o")
+            assert isinstance(pilot.app.screen, AddScreen)
+            for ch in "MY_ENV":
+                await pilot.press(ch)
+            screen = pilot.app.screen
+            assert isinstance(screen, AddScreen)
+            screen.query_one("#add-multiline", Checkbox).toggle()
+            await pilot.pause()
+            await pilot.press("ctrl+w")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, AddScreen)
+            assert table.row_count == DEFAULT_ROW_COUNT + 1
+            last_row_value = table.get_cell_at(
+                table.cursor_coordinate._replace(row=table.row_count - 1, column=2)
+            )
+            assert isinstance(last_row_value, Text)
+
+    async def test_multiline_textarea_no_key_shows_error(self):
+        """
+        Given the AddScreen is open with the multiline checkbox ticked
+        And the key field is blank
+        When the user presses ctrl+w
+        Then an error is shown and the screen remains open
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+
+            await pilot.press("o")
+            assert isinstance(pilot.app.screen, AddScreen)
+            screen = pilot.app.screen
+            assert isinstance(screen, AddScreen)
+            screen.query_one("#add-multiline", Checkbox).toggle()
+            await pilot.pause()
+            await pilot.press("ctrl+w")
+            await pilot.pause()
+
+            assert isinstance(pilot.app.screen, AddScreen)
+            error_label = pilot.app.screen.query_one("#add-error", Label)
+            assert "key" in str(error_label.content).lower()
+
+    async def test_multiline_textarea_non_dotenv_content_accepted(self):
+        """
+        Given the AddScreen is open with the multiline checkbox ticked
+        And the user types a PEM certificate (not dotenv format) into the TextArea
+        When the user presses ctrl+w
+        Then the screen closes and the table gains one multiline row
+        """
+        async with KvtApp().run_test(headless=True) as pilot:
+            await wait_loaded(pilot)
+            table = pilot.app.query_one("#env-table", EnvTable)
+
+            await pilot.press("o")
+            assert isinstance(pilot.app.screen, AddScreen)
+            for ch in "TLS_CERT":
+                await pilot.press(ch)
+            screen = pilot.app.screen
+            assert isinstance(screen, AddScreen)
+            screen.query_one("#add-multiline", Checkbox).toggle()
+            await pilot.pause()
+            textarea = screen.query_one("#add-blob", TextArea)
+            textarea.insert("-----BEGIN CERTIFICATE-----\nMIIBIjAN\n-----END CERTIFICATE-----\n")  # noqa: E501
+            await pilot.press("ctrl+w")
+            await pilot.pause()
+
+            assert not isinstance(pilot.app.screen, AddScreen)
+            assert table.row_count == DEFAULT_ROW_COUNT + 1
 
 
 class TestDelete:

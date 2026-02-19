@@ -12,6 +12,7 @@ from textual.widgets import Footer, Header, Input, LoadingIndicator
 from kvt.azure.client import AzureClientError
 from kvt.config import Config, ConfigError, load_config, load_theme, save_theme
 from kvt.constants import APP_TITLE, DEFAULT_ENV, DEFAULT_PROJECT, PROJECTS
+from kvt.domain.secrets import is_multiline
 from kvt.models import Action, ActionKind, EnvVar
 from kvt.providers import MockProvider, SecretProvider
 from kvt.providers_azure_hybrid import HybridAzureProvider
@@ -254,15 +255,21 @@ class KvtApp(App):
         )
         self._get_table().load(vars)
 
-    def _stage_set(self, key: str, value: str) -> None:
+    def _stage_set(self, key: str, value: str, multiline: bool | None = None) -> None:
         """Stage a set (add or edit) change in the local working copy.
 
         The provider is NOT written here.  Call _commit_staged() to flush.
+
+        ``multiline`` overrides the ``is_multiline`` flag on a newly added var.
+        When omitted the flag is inferred from the value content via
+        ``is_multiline()``.  For edits of existing rows the flag on the
+        existing ``EnvVar`` is preserved regardless of this argument.
         """
         previous = next((v.value for v in self._all_vars if v.key == key), None)
         # Update working copy.
         if previous is None:
-            self._all_vars.append(EnvVar(key=key, value=value))
+            flag = multiline if multiline is not None else is_multiline(value)
+            self._all_vars.append(EnvVar(key=key, value=value, is_multiline=flag))
         else:
             for v in self._all_vars:
                 if v.key == key:
@@ -566,7 +573,7 @@ class KvtApp(App):
 
         def on_save(var: EnvVar | None) -> None:
             if var is not None:
-                self._stage_set(var.key, var.value)
+                self._stage_set(var.key, var.value, multiline=var.is_multiline)
                 self.notify(f"Staged add {var.key}", timeout=2)
             self._get_table().focus()
 

@@ -27,6 +27,17 @@ AddScreen {
     border: tall $primary;
 }
 
+#add-blob {
+    height: 8;
+    margin-bottom: 1;
+    border: tall $primary-darken-2;
+    background: $surface-darken-1;
+}
+
+#add-blob:focus {
+    border: tall $primary;
+}
+
 #add-multiline {
     margin-bottom: 1;
     background: $surface-darken-2;
@@ -41,4 +52,14 @@ AddScreen {
 
 #add-hint {
     color: $text-muted;
+    margin-bottom: 1;
+}
+
+#add-buttons {
+    height: auto;
+    align: right middle;
+}
+
+#add-buttons Button {
+    margin-left: 1;
 }
