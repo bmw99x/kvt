@@ -4,6 +4,10 @@ A terminal UI for managing Azure Key Vault secrets as `.env` files.
 
 ![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue)
 
+
+https://github.com/user-attachments/assets/40f39c75-5e61-4e70-9aef-6a813598f8ee
+
+
 ⚠️ **EXPERIMENTAL — USE AT YOUR OWN RISK**
 
 This tool is experimental and provided as-is. The author is not responsible for any data loss, accidental deletion, misconfiguration, or other problems that may result from using this tool. Always ensure you have proper backups of your Azure Key Vault secrets and review all changes carefully before committing them to production vaults.
